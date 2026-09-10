@@ -34,9 +34,14 @@ cargo build --release -p rustpick             # CLI only, skips the Tauri depend
 ```
 
 The GUI (`rustpick-gui/`) is a separate workspace crate: a [Tauri](https://tauri.app)
-shell over the same miner core, with a static vanilla-JS frontend in `rustpick-gui/dist/`
-(no Node toolchain). It mirrors the original TDM window: Main / Inventory / Settings / Help
-tabs plus a tray icon.
+shell over the same miner core. Its frontend lives in `rustpick-gui/ui/` — React +
+[shadcn/ui](https://ui.shadcn.com) primitives (Tailwind v4, Hugeicons) built with Vite:
+
+```sh
+cd rustpick-gui/ui && npm ci && npm run build   # produces ui/dist
+```
+
+It mirrors the original TDM window: Main / Inventory / Settings / Help tabs plus a tray icon.
 
 On macOS with Command Line Tools that ship a newer SDK than your `ld` understands
 (`tapi error: unknown architecture arm64e.x1`), point the build at an older SDK:

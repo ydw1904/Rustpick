@@ -1,0 +1,16 @@
+type Unlisten = () => void
+
+declare global {
+  interface Window {
+    __TAURI__: {
+      core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
+      event: { listen: (name: string, cb: (e: { payload: unknown }) => void) => Promise<Unlisten> }
+    }
+  }
+}
+
+export const invoke = <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
+  window.__TAURI__.core.invoke(cmd, args) as Promise<T>
+
+export const listen = (name: string, cb: (payload: unknown) => void): Promise<Unlisten> =>
+  window.__TAURI__.event.listen(name, (e) => cb(e.payload))

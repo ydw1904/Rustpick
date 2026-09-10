@@ -9,3 +9,5 @@ reference/
 
 # Tauri codegen
 /rustpick-gui/gen
+/rustpick-gui/ui/node_modules
+/rustpick-gui/ui/dist
