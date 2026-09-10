@@ -1,5 +1,11 @@
 /target
 .DS_Store
 settings.json
+settings.json.new
+auth.json
+log.txt
 cookies.jar
 reference/
+
+# Tauri codegen
+/rustpick-gui/gen
