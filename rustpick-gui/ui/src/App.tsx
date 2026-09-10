@@ -7,9 +7,11 @@ import {
   ArrowUp02Icon,
   ArrowUpDoubleIcon,
   Copy01Icon,
+  Delete02Icon,
   GiftIcon,
+  Image01Icon,
+  LinkSquare02Icon,
   LockIcon,
-  MultiplicationSignIcon,
   RefreshIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons"
@@ -143,16 +145,16 @@ const FILTERS: [keyof Filters, string][] = [
   ["excluded", "Excluded"],
   ["finished", "Finished"],
 ]
-const STATUS_CLS: Record<ChannelStatus, string> = {
-  Online: "text-emerald-600 dark:text-emerald-400",
-  Pending: "text-amber-600 dark:text-amber-400",
-  Offline: "text-muted-foreground",
-}
+const OK = "text-emerald-600 dark:text-emerald-400"
+const WARN = "text-amber-600 dark:text-amber-400"
+const BAD = "text-red-600 dark:text-red-400"
+const DIM = "text-muted-foreground"
+const STATUS_CLS: Record<ChannelStatus, string> = { Online: OK, Pending: WARN, Offline: DIM }
 const CAMP_STATUS: Record<string, [string, string]> = {
-  Active_true: ["Active", "text-emerald-600 dark:text-emerald-400"],
-  Active_false: ["Active, not linked", "text-red-600 dark:text-red-400"],
-  Upcoming: ["Upcoming", "text-amber-600 dark:text-amber-400"],
-  Expired: ["Expired", "text-muted-foreground"],
+  Active_true: ["Active", OK],
+  Active_false: ["Active, not linked", BAD],
+  Upcoming: ["Upcoming", WARN],
+  Expired: ["Expired", DIM],
 }
 
 interface Filters {
@@ -171,6 +173,59 @@ const pct = (v: number) => `${(Math.max(0, Math.min(1, v)) * 100).toFixed(1)}%`
 
 function Tick({ className }: { className?: string }) {
   return <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className={cn("inline size-3.5 align-[-2px]", className)} />
+}
+
+/** Colored dot + text, used for every status indicator so they all read the same. */
+function Dot({ className }: { className?: string }) {
+  return <span className={cn("inline-block size-1.5 shrink-0 rounded-full bg-current", className)} />
+}
+
+function ProgressBlock({ label, title, value, detail, remaining }: {
+  label: string; title: string; value: number; detail: string; remaining: string
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+          <div className="truncate font-medium" title={title}>{title}</div>
+        </div>
+        <span className="shrink-0 text-sm font-medium tabular-nums">{pct(value)}</span>
+      </div>
+      <Progress value={value * 100} className="mt-2" />
+      <div className="mt-1.5 flex justify-between text-xs text-muted-foreground tabular-nums">
+        <span>{detail}</span>
+        <span>{remaining} remaining</span>
+      </div>
+    </div>
+  )
+}
+
+/** Selectable list used by the Priority and Exclude settings. */
+function GameList({ items, selected, onSelect, numbered }: {
+  items: string[]; selected: number | null; onSelect: (i: number) => void; numbered?: boolean
+}) {
+  return (
+    <div className="flex h-56 flex-col gap-0.5 overflow-y-auto rounded-lg border bg-muted/20 p-1">
+      {items.map((g, i) => (
+        <button
+          key={g}
+          type="button"
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm whitespace-nowrap outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/50",
+            selected === i && "bg-accent hover:bg-accent",
+          )}
+          onClick={() => onSelect(i)}
+        >
+          {numbered && <span className="w-4 text-xs text-muted-foreground tabular-nums">{i + 1}</span>}
+          <span className="truncate">{g}</span>
+        </button>
+      ))}
+      {items.length === 0 && (
+        <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">No games yet</div>
+      )}
+    </div>
+  )
 }
 
 /* ---------- app ---------- */
@@ -301,267 +356,308 @@ export default function App() {
     return true
   })
 
+  const statusCls = status.startsWith("Watching") ? OK : status === "Idle" || status === "Exited" ? DIM : WARN
+  const wsSlots = Array.from({ length: WS_SLOTS }, (_, i) => i)
+    .concat(Object.keys(websockets).map(Number).filter((i) => i >= WS_SLOTS).sort((a, b) => a - b))
+  const wsLive = Object.values(websockets).filter((w) => w.status === "Connected")
+  const wsTopics = wsLive.reduce((n, w) => n + w.topics, 0)
+
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as string)} className="px-3 pb-6">
-      <TabsList className="sticky top-0 z-10 mt-2 self-center bg-background/90 backdrop-blur">
-        <TabsTrigger value="main">Main</TabsTrigger>
-        <TabsTrigger value="inventory">Inventory</TabsTrigger>
-        <TabsTrigger value="settings">Settings</TabsTrigger>
-        <TabsTrigger value="help">Help</TabsTrigger>
-      </TabsList>
+    <Tabs value={tab} onValueChange={(v) => setTab(v as string)} className="h-screen gap-0 bg-background">
+      <header className="flex h-12 shrink-0 items-center gap-4 border-b px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="font-heading text-[15px] font-semibold tracking-tight">Rustpick</span>
+          <span className="h-4 w-px bg-border" />
+          <span className={cn("flex min-w-0 items-center gap-2 text-sm", statusCls)}>
+            <Dot />
+            <span className="truncate text-foreground/80">{esc(status)}</span>
+          </span>
+        </div>
+        <TabsList className="ml-auto">
+          <TabsTrigger value="main" className="px-3">Main</TabsTrigger>
+          <TabsTrigger value="inventory" className="px-3">Inventory</TabsTrigger>
+          <TabsTrigger value="settings" className="px-3">Settings</TabsTrigger>
+          <TabsTrigger value="help" className="px-3">Help</TabsTrigger>
+        </TabsList>
+      </header>
       <datalist id="games-dl">
         {games.map((g) => <option key={g} value={g} />)}
       </datalist>
 
       {/* ===== MAIN ===== */}
-      <TabsContent value="main" className="space-y-2">
-        <Card size="sm">
-          <CardContent className="text-sm">{esc(status)}</CardContent>
-        </Card>
-        <div className="grid grid-cols-[minmax(360px,1fr)_minmax(320px,1fr)] items-start gap-2">
-          <div className="space-y-2">
+      <TabsContent value="main" className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="flex flex-col gap-3">
             <Card size="sm">
-              <CardHeader><CardTitle>Websocket status</CardTitle></CardHeader>
-              <CardContent className="font-mono text-xs">
-                {Array.from({ length: WS_SLOTS }, (_, i) => i)
-                  .concat(Object.keys(websockets).map(Number).filter((i) => i >= WS_SLOTS).sort((a, b) => a - b))
-                  .map((i) => {
-                    const w = websockets[i]
-                    return (
-                      <div key={i} className="flex justify-between gap-3 py-px">
-                        <span>Websocket #{i + 1}:</span>
-                        <span className="text-muted-foreground">
-                          {w ? `${w.status}  ${w.topics}/${WS_MAX_TOPICS}` : ""}
-                        </span>
-                      </div>
-                    )
-                  })}
-              </CardContent>
-            </Card>
-            <Card size="sm">
-              <CardHeader><CardTitle>Login</CardTitle></CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-                  <span className="text-muted-foreground">Status:</span>
-                  <span className="font-medium">{userId != null ? "Logged in" : login ? "Login required" : "Logged out"}</span>
-                  <span className="text-muted-foreground">User ID:</span>
-                  <span className="text-muted-foreground">{userId ?? "—"}</span>
-                </div>
-                {login && (
-                  <div className="mt-3">
-                    <div className="text-xs text-muted-foreground">
-                      Open{" "}
-                      <a className="cursor-pointer text-primary underline" onClick={() => invoke("open_url", { url: login.url })}>
-                        {login.url}
-                      </a>{" "}
-                      and enter:
-                    </div>
-                    <div className="mt-1 flex items-center justify-center gap-2">
-                      <span className="font-mono text-2xl tracking-widest">{login.code}</span>
+              <CardHeader>
+                <CardTitle>Account</CardTitle>
+                <CardAction>
+                  <Badge variant="outline" className={cn("gap-1.5", userId != null ? OK : login ? WARN : DIM)}>
+                    <Dot />
+                    {userId != null ? "Logged in" : login ? "Login required" : "Logged out"}
+                  </Badge>
+                </CardAction>
+                <CardDescription>
+                  {userId != null ? <>User ID <span className="font-mono text-foreground">{userId}</span></> : "Twitch device login"}
+                </CardDescription>
+              </CardHeader>
+              {login && (
+                <CardContent className="flex flex-col gap-2.5">
+                  <p className="text-sm text-muted-foreground">
+                    Open{" "}
+                    <a className="cursor-pointer font-medium text-primary hover:underline" onClick={() => invoke("open_url", { url: login.url })}>
+                      {login.url.replace(/^https?:\/\/(www\.)?/, "")}
+                    </a>{" "}
+                    and enter this code:
+                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2">
+                    <span className="font-mono text-2xl font-medium tracking-[0.2em]">{login.code}</span>
+                    <div className="flex gap-2">
                       <Button variant="outline" size="sm" onClick={() => invoke("copy_text", { text: login.code })}>
                         <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={2} data-icon="inline-start" />
                         Copy
                       </Button>
+                      <Button size="sm" onClick={() => invoke("open_url", { url: login.url })}>
+                        <HugeiconsIcon icon={LinkSquare02Icon} size={14} strokeWidth={2} data-icon="inline-start" />
+                        Open Twitch
+                      </Button>
                     </div>
                   </div>
+                </CardContent>
+              )}
+            </Card>
+
+            <Card size="sm">
+              <CardHeader><CardTitle>Mining progress</CardTitle></CardHeader>
+              <CardContent>
+                {progress ? (
+                  <div className="flex flex-col gap-4">
+                    <ProgressBlock
+                      label={progress.game}
+                      title={progress.campaign_name}
+                      value={progress.campaign_progress}
+                      detail={`${progress.campaign_claimed}/${progress.campaign_total} drops claimed`}
+                      remaining={fmt(campMin, secs)}
+                    />
+                    <ProgressBlock
+                      label="Current drop"
+                      title={progress.drop_rewards}
+                      value={progress.drop_progress}
+                      detail={`${progress.drop_current}/${progress.drop_required} min`}
+                      remaining={fmt(dropMin, secs)}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Nothing is being mined yet.</p>
                 )}
-                <div className="mt-3 flex justify-center">
-                  <Button disabled={!login} onClick={() => login && invoke("open_url", { url: login.url })}>Login</Button>
-                </div>
               </CardContent>
             </Card>
+
             <Card size="sm">
-              <CardHeader><CardTitle>Campaign progress</CardTitle></CardHeader>
-              <CardContent className="text-sm">
-                <div className="grid grid-cols-2 text-center">
-                  <div className="text-muted-foreground">
-                    Game:<br /><span className="font-medium text-foreground">{progress?.game ?? "…"}</span>
-                  </div>
-                  <div className="text-muted-foreground">
-                    Campaign:<br /><span className="font-medium text-foreground">{progress?.campaign_name ?? "…"}</span>
-                  </div>
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <span className="text-muted-foreground">Progress:</span>
-                  <Progress value={progress ? progress.campaign_progress * 100 : 0} className="flex-1" />
-                  <span className="tabular-nums text-xs text-muted-foreground">
-                    {progress ? `${pct(progress.campaign_progress)} (${progress.campaign_claimed}/${progress.campaign_total})` : "-%"}
-                  </span>
-                </div>
-                <div className="text-center text-xs text-muted-foreground">{fmt(campMin, secs)} remaining</div>
-                <div className="my-3 border-t" />
-                <div className="text-center text-xs font-medium text-muted-foreground">Drop:</div>
-                <div className="text-center">{progress?.drop_rewards ?? "…"}</div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="text-muted-foreground">Progress:</span>
-                  <Progress value={progress ? progress.drop_progress * 100 : 0} className="flex-1" />
-                  <span className="tabular-nums text-xs text-muted-foreground">
-                    {progress ? `${pct(progress.drop_progress)} (${progress.drop_current}/${progress.drop_required} min)` : "-%"}
-                  </span>
-                </div>
-                <div className="text-center text-xs text-muted-foreground">{fmt(dropMin, secs)} remaining</div>
+              <CardHeader>
+                <CardTitle>Websockets</CardTitle>
+                <CardDescription>
+                  {wsLive.length} connected · {wsTopics} topics
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-1.5">
+                {wsSlots.map((i) => {
+                  const w = websockets[i]
+                  return (
+                    <span
+                      key={i}
+                      title={w ? `Websocket #${i + 1}: ${w.status}` : `Websocket #${i + 1}: unused`}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 font-mono text-xs tabular-nums",
+                        !w && "border-dashed text-muted-foreground/60",
+                      )}
+                    >
+                      <Dot className={w ? (w.status === "Connected" ? "bg-emerald-500" : "bg-amber-500") : "bg-border"} />
+                      {i + 1}
+                      {w && <span className="text-muted-foreground">{w.topics}/{WS_MAX_TOPICS}</span>}
+                    </span>
+                  )
+                })}
               </CardContent>
             </Card>
           </div>
-          <Card size="sm">
+
+          <Card size="sm" className="self-start">
             <CardHeader>
               <CardTitle>Channels</CardTitle>
-              <CardAction className="flex items-center gap-2">
+              <CardAction>
                 <Button size="sm" disabled={selected == null} onClick={() => selected != null && invoke("select", { id: selected })}>
                   Switch
                 </Button>
               </CardAction>
-              <CardDescription>Click a row, then Switch · Esc clears</CardDescription>
+              <CardDescription>Select a channel and press Switch. Esc clears the selection.</CardDescription>
             </CardHeader>
             <CardContent className="px-0">
-              <div className="max-h-[400px] overflow-y-auto">
+              <div className="max-h-[420px] overflow-y-auto border-t">
                 <Table>
-                  <TableHeader className="sticky top-0 z-10 bg-card">
-                    <TableRow>
-                      <TableHead>Channel</TableHead>
+                  <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
+                    <TableRow className="hover:bg-transparent [&>th]:h-9 [&>th]:text-xs [&>th]:text-muted-foreground">
+                      <TableHead className="pl-4">Channel</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Game</TableHead>
-                      <TableHead title="Drops enabled"><HugeiconsIcon icon={GiftIcon} size={14} strokeWidth={2} /></TableHead>
-                      <TableHead>Viewers</TableHead>
-                      <TableHead title="Allow-list based"><HugeiconsIcon icon={LockIcon} size={14} strokeWidth={2} /></TableHead>
+                      <TableHead className="text-center" title="Drops enabled"><HugeiconsIcon icon={GiftIcon} size={14} strokeWidth={2} className="inline" /></TableHead>
+                      <TableHead className="text-right">Viewers</TableHead>
+                      <TableHead className="pr-4 text-center" title="Allow-list based"><HugeiconsIcon icon={LockIcon} size={14} strokeWidth={2} className="inline" /></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {channels.map((c) => (
                       <TableRow
                         key={c.id}
-                        className={cn("cursor-pointer", selected === c.id && "bg-accent")}
+                        aria-selected={selected === c.id}
+                        className={cn("cursor-pointer", selected === c.id && "bg-accent hover:bg-accent")}
                         onClick={() => setSelected((sel) => (sel === c.id ? null : c.id))}
                       >
-                        <TableCell className={cn(watching === c.id && "font-medium text-emerald-600 dark:text-emerald-400")}>
+                        <TableCell className={cn("pl-4 font-medium", watching === c.id && OK)} title={watching === c.id ? "Currently watching" : undefined}>
                           {c.name}
                         </TableCell>
-                        <TableCell className={cn("font-medium", STATUS_CLS[c.status])}>
-                          {c.status.toUpperCase()}
+                        <TableCell className={cn("text-xs", STATUS_CLS[c.status])}>
+                          <span className="inline-flex items-center gap-1.5"><Dot />{c.status}</span>
                         </TableCell>
-                        <TableCell>{c.game ?? ""}</TableCell>
-                        <TableCell>{c.drops_enabled && <Tick className="text-muted-foreground" />}</TableCell>
-                        <TableCell className="tabular-nums">{c.viewers ?? ""}</TableCell>
-                        <TableCell>{c.acl_based && <Tick className="text-muted-foreground" />}</TableCell>
+                        <TableCell className={cn(!c.game && "text-muted-foreground")}>{c.game ?? "–"}</TableCell>
+                        <TableCell className="text-center">{c.drops_enabled && <Tick className="text-muted-foreground" />}</TableCell>
+                        <TableCell className="text-right text-muted-foreground tabular-nums">{c.viewers?.toLocaleString() ?? ""}</TableCell>
+                        <TableCell className="pr-4 text-center">{c.acl_based && <Tick className="text-muted-foreground" />}</TableCell>
                       </TableRow>
                     ))}
+                    {channels.length === 0 && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No channels yet.</TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </div>
             </CardContent>
           </Card>
         </div>
-        <Card size="sm">
+
+        <Card size="sm" className="flex min-h-48 flex-1 flex-col">
           <CardHeader><CardTitle>Output</CardTitle></CardHeader>
-          <CardContent className="px-1">
+          <CardContent className="flex min-h-0 flex-1 flex-col">
             <pre
               ref={consoleRef}
               onScroll={(e) => {
                 const el = e.currentTarget
                 stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30
               }}
-              className="h-40 overflow-y-auto rounded-md bg-muted/50 px-2 py-1.5 font-mono text-xs whitespace-pre-wrap"
+              className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap"
             >
-              {consoleLines.join("\n")}
+              {consoleLines.length ? consoleLines.join("\n") : <span className="text-muted-foreground">Waiting for output…</span>}
             </pre>
           </CardContent>
         </Card>
       </TabsContent>
 
       {/* ===== INVENTORY ===== */}
-      <TabsContent value="inventory" className="space-y-2">
-        <Card size="sm">
-          <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="text-sm text-muted-foreground">Show:</span>
-            {FILTERS.map(([key, label]) => (
-              <label key={key} className="flex cursor-pointer items-center gap-1.5 text-sm">
-                <Checkbox
-                  checked={filters[key]}
-                  onCheckedChange={(checked) => setFilters((f) => ({ ...f, [key]: !!checked }))}
-                />
-                {label}
-              </label>
-            ))}
-            <Button size="sm" variant="outline" onClick={() => invoke("reload")}>
-              <HugeiconsIcon icon={RefreshIcon} size={14} strokeWidth={2} data-icon="inline-start" />
-              Refresh
-            </Button>
-          </CardContent>
-        </Card>
+      <TabsContent value="inventory" className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl bg-card px-3 py-2 ring-1 ring-foreground/10">
+          <span className="text-sm text-muted-foreground">Show</span>
+          {FILTERS.map(([key, label]) => (
+            <label key={key} className="flex cursor-pointer items-center gap-1.5 text-sm">
+              <Checkbox
+                checked={filters[key]}
+                onCheckedChange={(checked) => setFilters((f) => ({ ...f, [key]: !!checked }))}
+              />
+              {label}
+            </label>
+          ))}
+          <Button size="sm" variant="outline" className="ml-auto" onClick={() => invoke("reload")}>
+            <HugeiconsIcon icon={RefreshIcon} size={14} strokeWidth={2} data-icon="inline-start" />
+            Refresh
+          </Button>
+        </div>
         {visibleCampaigns.map((c) => {
-          const [label, cls] = CAMP_STATUS[c.status === "Active" ? `Active_${c.eligible}` : c.status] ?? ["", ""]
+          const [label, cls] = CAMP_STATUS[c.status === "Active" ? `Active_${c.eligible}` : c.status] ?? ["", DIM]
           return (
-            <Card key={c.id}>
-              <CardContent className="flex flex-wrap gap-4">
-                <div className="flex min-w-[260px] flex-1 gap-3">
-                  {c.image_url ? (
-                    <img
-                      src={c.image_url}
-                      alt=""
-                      className="h-[99px] w-[74px] shrink-0 rounded-md bg-muted object-cover"
-                      onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-                    />
-                  ) : (
-                    <div className="h-[99px] w-[74px] shrink-0 rounded-md bg-muted" />
-                  )}
-                  <div className="min-w-0">
-                    <div className="font-medium">{c.name}</div>
-                    <div className={cn("text-sm", cls)}>{label}</div>
-                    <div className="text-xs text-muted-foreground">Ends: {dt(c.ends_at)}</div>
-                    {!c.linked && c.link_url ? (
-                      <a className="cursor-pointer text-sm text-primary underline" onClick={() => invoke("open_url", { url: c.link_url })}>
-                        Link account
-                      </a>
-                    ) : c.linked ? (
-                      <div className="text-sm text-emerald-600 dark:text-emerald-400"><Tick /> Linked</div>
-                    ) : null}
+            <Card key={c.id} size="sm">
+              <CardContent className="flex flex-col gap-4 md:flex-row">
+                <div className="flex w-full shrink-0 gap-3 md:w-80">
+                  <div className="flex h-24 w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground/50">
+                    {c.image_url ? (
+                      <img src={c.image_url} alt="" className="size-full object-cover" onError={(e) => (e.currentTarget.style.display = "none")} />
+                    ) : (
+                      <HugeiconsIcon icon={Image01Icon} size={20} strokeWidth={1.5} />
+                    )}
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <div className="truncate font-medium" title={c.name}>{c.name}</div>
+                    <div className="truncate text-xs text-muted-foreground">{c.game}</div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                      <span className={cn("inline-flex items-center gap-1.5 font-medium", cls)}><Dot />{label}</span>
+                      {(c.linked || c.link_url) && <span className="text-muted-foreground">·</span>}
+                      {c.linked ? (
+                        <span className="text-muted-foreground">Linked</span>
+                      ) : c.link_url ? (
+                        <a className="cursor-pointer font-medium text-primary hover:underline" onClick={() => invoke("open_url", { url: c.link_url })}>
+                          Link account
+                        </a>
+                      ) : null}
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {c.status === "Upcoming" ? `Starts ${dt(c.starts_at)}` : `Ends ${dt(c.ends_at)}`}
+                    </div>
                     <div className="mt-2 flex items-center gap-2">
                       <Progress value={c.progress * 100} className="flex-1" />
-                      <span className="text-xs tabular-nums text-muted-foreground">
-                        {pct(c.progress)} ({c.claimed}/{c.total})
-                      </span>
+                      <span className="text-xs text-muted-foreground tabular-nums">{c.claimed}/{c.total}</span>
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-wrap content-start gap-2">
+                <div className="flex flex-1 flex-wrap content-start gap-2">
                   {c.drops.map((d) => (
-                    <div key={d.id} title={d.rewards} className="w-[118px] rounded-lg bg-muted/40 p-2 text-center text-xs ring-1 ring-foreground/10">
-                      <div className="flex h-14 items-center justify-center text-muted-foreground">{d.name}</div>
-                      <div className="truncate font-medium">{d.rewards || d.name}</div>
-                      <div className="mt-1 text-muted-foreground">
-                        {d.is_claimed ? (
-                          <span className="font-medium text-emerald-600 dark:text-emerald-400"><Tick /> Claimed</span>
-                        ) : (
-                          `${d.current_minutes}/${d.required_minutes} min`
-                        )}
-                      </div>
+                    <div
+                      key={d.id}
+                      title={`${d.name}: ${d.rewards}`}
+                      className={cn(
+                        "flex h-24 w-[132px] flex-col justify-between gap-2 rounded-lg border bg-muted/30 p-2.5 text-xs",
+                        d.is_claimed && "border-emerald-500/30 bg-emerald-500/5",
+                      )}
+                    >
+                      <div className="line-clamp-2 leading-snug font-medium">{d.rewards || d.name}</div>
+                      {d.is_claimed ? (
+                        <span className={cn("inline-flex items-center gap-1 font-medium", OK)}><Tick /> Claimed</span>
+                      ) : (
+                        <div>
+                          <Progress value={d.progress * 100} />
+                          <div className="mt-1.5 text-muted-foreground tabular-nums">{d.current_minutes}/{d.required_minutes} min</div>
+                        </div>
+                      )}
                     </div>
-                  )) || <span className="text-sm text-muted-foreground">No drops.</span>}
+                  ))}
+                  {c.drops.length === 0 && <span className="self-center text-sm text-muted-foreground">No drops.</span>}
                 </div>
               </CardContent>
             </Card>
           )
         })}
         {visibleCampaigns.length === 0 && (
-          <div className="text-sm text-muted-foreground">No campaigns match the current filters.</div>
+          <div className="flex flex-1 items-center justify-center py-16 text-sm text-muted-foreground">
+            {inventory.length === 0 ? "No campaigns loaded yet." : "No campaigns match the current filters."}
+          </div>
         )}
       </TabsContent>
 
       {/* ===== SETTINGS ===== */}
-      <TabsContent value="settings">
-        <div className="grid grid-cols-[minmax(320px,1.2fr)_1fr_1fr] items-start gap-2">
-          <div className="space-y-2">
+      <TabsContent value="settings" className="flex min-h-0 flex-col overflow-y-auto">
+        <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr]">
+          <div className="flex flex-col gap-3 md:col-span-2 xl:col-span-1">
             <Card size="sm">
               <CardHeader><CardTitle>General</CardTitle></CardHeader>
-              <CardContent className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-sm">
-                <label htmlFor="s-dark">Dark mode:</label>
+              <CardContent className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-3 text-sm">
+                <label htmlFor="s-dark">Dark mode</label>
                 <Checkbox
                   id="s-dark"
                   checked={!!settings?.dark_mode}
                   onCheckedChange={(checked) => update({ dark_mode: !!checked })}
                 />
-                <label>Priority mode:</label>
+                <label>Priority mode</label>
                 <Select
+                  items={Object.fromEntries(MODES)}
                   value={settings?.priority_mode}
                   onValueChange={(v) => update({ priority_mode: v as PriorityMode })}
                 >
@@ -570,15 +666,15 @@ export default function App() {
                     {MODES.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <label htmlFor="s-proxy">Proxy <span className="text-muted-foreground">(restart)</span>:</label>
+                <label htmlFor="s-proxy">Proxy</label>
                 <Input
                   id="s-proxy"
-                  placeholder="http://…"
+                  placeholder="http://host:port (needs restart)"
                   value={settings?.proxy ?? ""}
                   onChange={(e) => update({ proxy: e.target.value })}
                 />
-                <label htmlFor="s-quality">Connection quality:</label>
-                <div className="flex items-center gap-2">
+                <label htmlFor="s-quality">Connection quality</label>
+                <div className="flex items-center gap-3">
                   <Slider
                     id="s-quality"
                     min={1}
@@ -588,7 +684,7 @@ export default function App() {
                     onValueChange={(v) => update({ connection_quality: (v as number[])[0] })}
                     className="flex-1"
                   />
-                  <span className="w-7 text-xs text-muted-foreground tabular-nums">
+                  <span className="w-6 text-right text-xs text-muted-foreground tabular-nums">
                     {settings?.connection_quality}×
                   </span>
                 </div>
@@ -597,141 +693,128 @@ export default function App() {
             <Card size="sm">
               <CardHeader>
                 <CardTitle>Advanced</CardTitle>
-                <CardDescription className="font-medium text-amber-600 dark:text-amber-400">
-                  Warning! These options can cause the miner to misbehave. If you hit issues, make sure they are disabled.
+                <CardDescription className={WARN}>
+                  These options can make the miner misbehave. Turn them off if you hit issues.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <label className="flex cursor-pointer items-center gap-2">
+              <CardContent className="flex flex-col gap-2.5 text-sm">
+                <label className="flex cursor-pointer items-center gap-2.5">
                   <Checkbox
                     checked={!!settings?.enable_badges_emotes}
                     onCheckedChange={(checked) => update({ enable_badges_emotes: !!checked })}
                   />
-                  Enable partial support for badges and emotes
+                  Partial support for badges and emotes
                 </label>
-                <label className="flex cursor-pointer items-center gap-2">
+                <label className="flex cursor-pointer items-center gap-2.5">
                   <Checkbox
                     checked={!!settings?.available_drops_check}
                     onCheckedChange={(checked) => update({ available_drops_check: !!checked })}
                   />
-                  Enable extra available drops check
+                  Extra available-drops check
                 </label>
               </CardContent>
             </Card>
           </div>
+
           <Card size="sm">
-            <CardHeader><CardTitle>Priority</CardTitle></CardHeader>
-            <CardContent>
-              <div className="mb-2 flex gap-2">
+            <CardHeader>
+              <CardTitle>Priority</CardTitle>
+              <CardDescription>Games to mine first, in order.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              <div className="flex gap-2">
                 <Input
                   list="games-dl"
-                  placeholder="Game name"
+                  placeholder="Add a game…"
                   value={prioInput}
                   onChange={(e) => setPrioInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") addPrio() }}
-                  className="min-w-0"
                 />
-                <Button variant="outline" size="icon" onClick={addPrio}>
+                <Button variant="outline" size="icon" title="Add" onClick={addPrio}>
                   <HugeiconsIcon icon={Add01Icon} size={16} strokeWidth={2} />
                 </Button>
               </div>
               <div className="grid grid-cols-[1fr_auto] gap-2">
-                <div className="h-56 overflow-y-auto rounded-md border">
-                  {(settings?.priority ?? []).map((g, i) => (
-                    <div
-                      key={i}
-                      className={cn("cursor-pointer px-2 py-0.5 text-sm whitespace-nowrap", prioSel === i && "bg-accent")}
-                      onClick={() => setPrioSel(i)}
-                    >
-                      {g}
-                    </div>
-                  ))}
-                  {(settings?.priority.length ?? 0) === 0 && (
-                    <div className="px-2 py-0.5 text-sm text-muted-foreground">empty</div>
-                  )}
-                </div>
-                <div className="flex flex-col justify-center gap-1">
+                <GameList numbered items={settings?.priority ?? []} selected={prioSel} onSelect={setPrioSel} />
+                <div className="flex flex-col gap-1">
                   {([["top", ArrowUpDoubleIcon, "Move to top"], ["up", ArrowUp02Icon, "Move up"],
                     ["down", ArrowDown02Icon, "Move down"], ["bottom", ArrowDownDoubleIcon, "Move to bottom"]] as const).map(
                     ([op, icon, title]) => (
-                      <Button key={op} variant="ghost" size="icon-sm" title={title} onClick={() => movePrio(op)}>
+                      <Button key={op} variant="ghost" size="icon-sm" title={title} disabled={prioSel == null} onClick={() => movePrio(op)}>
                         <HugeiconsIcon icon={icon} size={14} strokeWidth={2} />
                       </Button>
                     ),
                   )}
-                  <Button variant="ghost" size="icon-sm" title="Remove" className="text-destructive hover:text-destructive" onClick={delPrio}>
-                    <HugeiconsIcon icon={MultiplicationSignIcon} size={14} strokeWidth={2} />
+                  <Button variant="ghost" size="icon-sm" title="Remove" disabled={prioSel == null} className="mt-auto text-destructive hover:text-destructive" onClick={delPrio}>
+                    <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={2} />
                   </Button>
                 </div>
               </div>
             </CardContent>
           </Card>
+
           <Card size="sm">
-            <CardHeader><CardTitle>Exclude</CardTitle></CardHeader>
-            <CardContent>
-              <div className="mb-2 flex gap-2">
+            <CardHeader>
+              <CardTitle>Exclude</CardTitle>
+              <CardDescription>Games that are never mined.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              <div className="flex gap-2">
                 <Input
                   list="games-dl"
-                  placeholder="Game name"
+                  placeholder="Add a game…"
                   value={exclInput}
                   onChange={(e) => setExclInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") addExcl() }}
-                  className="min-w-0"
                 />
-                <Button variant="outline" size="icon" onClick={addExcl}>
+                <Button variant="outline" size="icon" title="Add" onClick={addExcl}>
                   <HugeiconsIcon icon={Add01Icon} size={16} strokeWidth={2} />
                 </Button>
               </div>
-              <div className="h-56 overflow-y-auto rounded-md border">
-                {(settings?.exclude ?? []).map((g) => (
-                  <div
-                    key={g}
-                    className={cn("cursor-pointer px-2 py-0.5 text-sm whitespace-nowrap", exclSel === g && "bg-accent")}
-                    onClick={() => setExclSel(g)}
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <GameList
+                  items={settings?.exclude ?? []}
+                  selected={exclSel == null ? null : (settings?.exclude.indexOf(exclSel) ?? -1)}
+                  onSelect={(i) => setExclSel(settings?.exclude[i] ?? null)}
+                />
+                <div className="flex flex-col">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Remove"
+                    disabled={exclSel == null}
+                    className="mt-auto text-destructive hover:text-destructive"
+                    onClick={() => {
+                      if (!settings || exclSel == null) return
+                      update({ exclude: settings.exclude.filter((x) => x !== exclSel) })
+                      setExclSel(null)
+                    }}
                   >
-                    {g}
-                  </div>
-                ))}
-                {(settings?.exclude.length ?? 0) === 0 && (
-                  <div className="px-2 py-0.5 text-sm text-muted-foreground">empty</div>
-                )}
+                    <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={2} />
+                  </Button>
+                </div>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-2 w-full text-destructive hover:text-destructive"
-                onClick={() => {
-                  if (!settings || exclSel == null) return
-                  update({ exclude: settings.exclude.filter((x) => x !== exclSel) })
-                  setExclSel(null)
-                }}
-              >
-                <HugeiconsIcon icon={MultiplicationSignIcon} size={14} strokeWidth={2} data-icon="inline-start" />
-                Remove
-              </Button>
             </CardContent>
           </Card>
         </div>
-        <div className="mt-3 flex items-center justify-center gap-3">
-          <span className="text-sm text-muted-foreground">Most changes require a reload to take effect:</span>
-          <Button disabled={!dirty} onClick={saveSettings}>Save</Button>
-          <Button variant="outline" onClick={() => { saveSettings(); invoke("reload") }}>
-            Save &amp; Reload
-          </Button>
+        <div className="sticky bottom-0 mt-auto flex items-center gap-2 border-t bg-background/95 px-3 py-2 backdrop-blur">
+          <span className="mr-auto text-xs text-muted-foreground">Most changes take effect after a reload.</span>
           {dirty && (
-            <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400">unsaved</Badge>
+            <Badge variant="outline" className={cn("border-amber-500/40", WARN)}>Unsaved changes</Badge>
           )}
+          <Button variant="outline" size="sm" disabled={!dirty} onClick={saveSettings}>Save</Button>
+          <Button size="sm" onClick={() => { saveSettings(); invoke("reload") }}>Save &amp; Reload</Button>
         </div>
       </TabsContent>
 
       {/* ===== HELP ===== */}
-      <TabsContent value="help">
+      <TabsContent value="help" className="min-h-0 overflow-y-auto p-3">
         <Card className="mx-auto max-w-3xl">
-          <CardContent className="space-y-3 text-sm leading-relaxed [&_b]:font-semibold [&_h4]:mt-4 [&_h4]:font-medium [&_li]:list-disc [&_ul]:pl-5">
-            <div className="text-base font-medium">Rustpick</div>
+          <CardContent className="space-y-3 text-sm leading-relaxed [&_b]:font-semibold [&_h4]:mt-5 [&_h4]:font-medium [&_li]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5">
+            <div className="font-heading text-base font-semibold">Rustpick</div>
             <p>
               A headless Twitch drops miner, ported from{" "}
-              <a className="cursor-pointer text-primary underline" onClick={() => invoke("open_url", { url: "https://github.com/DevilXD/TwitchDropsMiner" })}>
+              <a className="cursor-pointer text-primary hover:underline" onClick={() => invoke("open_url", { url: "https://github.com/DevilXD/TwitchDropsMiner" })}>
                 TwitchDropsMiner
               </a>
               . It watches drop-enabled channels without video, switches when one goes offline or a
@@ -739,9 +822,9 @@ export default function App() {
             </p>
             <h4>Tabs</h4>
             <ul>
-              <li><b>Main</b> — login, live status, websocket health, mining progress, output log, and the channel list. Click a channel and press <b>Switch</b> to pin it; press Esc to unpin.</li>
-              <li><b>Inventory</b> — every campaign and its drops, with progress and account-link status. Use the filters to hide categories.</li>
-              <li><b>Settings</b> — priority and exclude lists, priority mode, and connection options. Most changes apply on the next reload.</li>
+              <li><b>Main</b>: login, live status, websocket health, mining progress, output log, and the channel list. Click a channel and press <b>Switch</b> to pin it; press Esc to unpin.</li>
+              <li><b>Inventory</b>: every campaign and its drops, with progress and account-link status. Use the filters to hide categories.</li>
+              <li><b>Settings</b>: priority and exclude lists, priority mode, and connection options. Most changes apply on the next reload.</li>
             </ul>
             <h4>Login</h4>
             <p>Device-code only: open the shown link, enter the code on Twitch, and approve. No password is ever entered here.</p>
@@ -749,13 +832,13 @@ export default function App() {
             <p>Closing the window shuts the miner down cleanly. The tray icon offers <i>Show window</i> and <i>Quit</i>.</p>
             <h4>Priority modes</h4>
             <ul>
-              <li><b>Priority list only</b> — mine strictly in the order of the priority list.</li>
-              <li><b>Ending soonest first</b> — prefer campaigns closest to ending.</li>
-              <li><b>Low availability first</b> — prefer campaigns offered by the fewest channels.</li>
+              <li><b>Priority list only</b>: mine strictly in the order of the priority list.</li>
+              <li><b>Ending soonest first</b>: prefer campaigns closest to ending.</li>
+              <li><b>Low availability first</b>: prefer campaigns offered by the fewest channels.</li>
             </ul>
             <p className="text-muted-foreground">
               Files (settings.json, auth.json, log.txt) live in the working directory, or in $RUSTPICK_DIR.
-              auth.json holds your Twitch token — treat it like a password.
+              auth.json holds your Twitch token, so treat it like a password.
             </p>
           </CardContent>
         </Card>

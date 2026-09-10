@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 type Unlisten = () => void
 
 declare global {
@@ -7,6 +8,11 @@ declare global {
       event: { listen: (name: string, cb: (e: { payload: unknown }) => void) => Promise<Unlisten> }
     }
   }
+}
+
+if (import.meta.env.DEV && !window.__TAURI__) {
+  const { install } = await import("./mock")
+  install()
 }
 
 export const invoke = <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
