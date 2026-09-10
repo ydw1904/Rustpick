@@ -29,19 +29,29 @@ rules have unit tests, but the first real run will likely shake out field-name m
 ## Build
 
 ```sh
-cargo build --release            # rustpick (CLI) and rustpick-gui (Tauri desktop UI)
-cargo build --release -p rustpick             # CLI only, skips the Tauri dependency tree
+cargo build --release -p rustpick       # CLI only, skips the Tauri dependency tree
+cd rustpick-gui && npm run tauri build  # GUI: runs the UI build, then cargo --release
 ```
+
+The first GUI build needs `cd rustpick-gui/ui && npm ci` once (installs Vite, the shadcn
+primitives and the `@tauri-apps/cli` wrapper the `npm run tauri` script calls).
 
 The GUI (`rustpick-gui/`) is a separate workspace crate: a [Tauri](https://tauri.app)
 shell over the same miner core. Its frontend lives in `rustpick-gui/ui/` — React +
-[shadcn/ui](https://ui.shadcn.com) primitives (Tailwind v4, Hugeicons) built with Vite:
+[shadcn/ui](https://ui.shadcn.com) primitives (Tailwind v4, Hugeicons) built with Vite.
+It mirrors the original TDM window: Main / Inventory / Settings / Help tabs plus a tray
+icon.
+
+Develop the UI with hot reload:
 
 ```sh
-cd rustpick-gui/ui && npm ci && npm run build   # produces ui/dist
+cd rustpick-gui && npm run tauri dev    # starts Vite on :5173 + the app with HMR
 ```
 
-It mirrors the original TDM window: Main / Inventory / Settings / Help tabs plus a tray icon.
+Tauri commands must run from `rustpick-gui/` (not `ui/`). Plain `cargo build`/`cargo run`
+on the GUI crate produces a *dev-mode* binary that expects `http://localhost:5173` to be
+serving; add `--features tauri/custom-protocol` to embed `ui/dist` instead and get a
+standalone binary.
 
 On macOS with Command Line Tools that ship a newer SDK than your `ld` understands
 (`tapi error: unknown architecture arm64e.x1`), point the build at an older SDK:
@@ -49,6 +59,8 @@ On macOS with Command Line Tools that ship a newer SDK than your `ld` understand
 ```sh
 SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk cargo build
 ```
+
+(The same `SDKROOT=` prefix works for `npm run tauri dev` / `npm run tauri build`.)
 
 ## Usage
 

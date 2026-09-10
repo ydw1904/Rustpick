@@ -1,0 +1,9 @@
+{
+  "name": "rustpick-gui-tauri",
+  "private": true,
+  "scripts": {
+    "tauri": "ui/node_modules/.bin/tauri",
+    "dev": "npm run dev --prefix ui",
+    "build": "npm run build --prefix ui"
+  }
+}
