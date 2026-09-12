@@ -37,6 +37,8 @@ enum Cmd {
     Set { key: String, value: bool },
     /// Forget the saved Twitch login
     Logout,
+    /// Import settings from a TwitchDropsMiner install (its settings.json or its folder)
+    Import { path: std::path::PathBuf },
 }
 
 #[tokio::main]
@@ -68,6 +70,7 @@ async fn main() -> Result<()> {
             println!("Logged out.");
             return Ok(());
         }
+        Cmd::Import { path } => settings = Settings::import_tdm(&path)?,
     }
     settings.save()?;
     println!("Saved {}", Settings::path().display());
