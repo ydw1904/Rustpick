@@ -249,6 +249,8 @@ export default function App() {
   const [exclSel, setExclSel] = useState<string | null>(null)
   const [prioInput, setPrioInput] = useState("")
   const [exclInput, setExclInput] = useState("")
+  const [tdmPath, setTdmPath] = useState("")
+  const [tdmMsg, setTdmMsg] = useState("")
   const [filters, setFilters] = useState<Filters>({
     notlinked: true, upcoming: true, expired: true, excluded: false, finished: true,
   })
@@ -328,6 +330,12 @@ export default function App() {
     if (!settings) return
     invoke("save_settings", { settings })
     setSaved(JSON.stringify(settings))
+  }
+  const importTdm = () => {
+    setTdmMsg("")
+    invoke<Settings>("import_tdm", { path: tdmPath })
+      .then((s) => { setSettings(s); setTdmMsg("Imported. Review, then Save.") })
+      .catch((e) => setTdmMsg(String(e)))
   }
   const games = [...new Set(inventory.map((c) => c.game))].sort()
 
@@ -712,6 +720,26 @@ export default function App() {
                   />
                   Extra available-drops check
                 </label>
+              </CardContent>
+            </Card>
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle>Import from TwitchDropsMiner</CardTitle>
+                <CardDescription>
+                  Paste the path to TDM&apos;s <code>settings.json</code> (or its folder). Loads its
+                  values into the form; Save to keep them.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2 text-sm">
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="/path/to/TwitchDropsMiner"
+                    value={tdmPath}
+                    onChange={(e) => setTdmPath(e.target.value)}
+                  />
+                  <Button size="sm" variant="outline" disabled={!tdmPath} onClick={importTdm}>Import</Button>
+                </div>
+                {tdmMsg && <span className="text-xs text-muted-foreground">{tdmMsg}</span>}
               </CardContent>
             </Card>
           </div>

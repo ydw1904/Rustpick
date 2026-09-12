@@ -32,6 +32,13 @@ fn save_settings(state: tauri::State<AppState>, settings: Settings) {
     state.handle.send(Command::Settings(settings));
 }
 
+/// Parse a TwitchDropsMiner settings file/folder and hand the values back to the
+/// page. The user reviews them in the form and clicks Save to commit.
+#[tauri::command]
+fn import_tdm(path: String) -> Result<Settings, String> {
+    Settings::import_tdm(std::path::Path::new(&path)).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn reload(state: tauri::State<AppState>) {
     state.handle.send(Command::Reload);
@@ -123,6 +130,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            import_tdm,
             reload,
             select,
             shutdown,
