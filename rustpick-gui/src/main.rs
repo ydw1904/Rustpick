@@ -36,7 +36,41 @@ fn save_settings(state: tauri::State<AppState>, settings: Settings) {
 /// page. The user reviews them in the form and clicks Save to commit.
 #[tauri::command]
 fn import_tdm(path: String) -> Result<Settings, String> {
-    Settings::import_tdm(std::path::Path::new(&path)).map_err(|e| e.to_string())
+    let path = std::path::Path::new(&path);
+    let settings = Settings::import_tdm(path).map_err(|e| e.to_string())?;
+    // adopt the TDM install's login session too, if its cookies.jar is there
+    let dir = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent().map(std::path::Path::to_path_buf).unwrap_or_default()
+    };
+    if let Some((device_id, token)) = rustpick::http::import_tdm_cookies(&dir) {
+        let device_id = if device_id.len() == 32 {
+            device_id
+        } else {
+            rustpick::util::nonce(rustpick::util::CHARS_HEX_LOWER, 32)
+        };
+        let _ = rustpick::http::save_auth_file(device_id, Some(token));
+    }
+    Ok(settings)
+}
+
+/// Is the login-time autostart entry present?
+#[tauri::command]
+fn get_autostart() -> bool {
+    rustpick::autostart::enabled()
+}
+
+/// Create or remove the login-time autostart entry.
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<(), String> {
+    rustpick::autostart::set(enabled).map_err(|e| e.to_string())
+}
+
+/// Names of the bundled UI languages.
+#[tauri::command]
+fn list_languages() -> Vec<&'static str> {
+    rustpick::translate::LANGUAGES.iter().map(|(name, _)| *name).collect()
 }
 
 #[tauri::command]
@@ -115,8 +149,14 @@ fn main() {
         Settings::default()
     });
     rustpick::init_logging(0, false).ok();
+    let lock = rustpick::lock::SingleInstance::acquire(&rustpick::settings::data_dir().join("lock.file"));
+    if let Err(e) = lock {
+        eprintln!("Another instance appears to be running or the lock file is unwritable ({e}). Exiting.");
+        std::process::exit(3);
+    }
+    rustpick::translate::init(&settings.language);
     let (events, _) = broadcast::channel::<Event>(1024);
-    let (miner, handle) = Miner::new(settings.clone(), events.clone()).expect("miner");
+    let (miner, handle) = Miner::new(settings.clone(), events.clone(), false).expect("miner");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -131,6 +171,9 @@ fn main() {
             get_settings,
             save_settings,
             import_tdm,
+            get_autostart,
+            set_autostart,
+            list_languages,
             reload,
             select,
             shutdown,
