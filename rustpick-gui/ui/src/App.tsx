@@ -115,6 +115,7 @@ interface Settings {
   enable_badges_emotes: boolean
   available_drops_check: boolean
   dark_mode: boolean
+  language: string
 }
 
 type MinerEvent =
@@ -251,6 +252,8 @@ export default function App() {
   const [exclInput, setExclInput] = useState("")
   const [tdmPath, setTdmPath] = useState("")
   const [tdmMsg, setTdmMsg] = useState("")
+  const [autostart, setAutostart] = useState<boolean | null>(null)
+  const [languages, setLanguages] = useState<string[]>([])
   const [filters, setFilters] = useState<Filters>({
     notlinked: true, upcoming: true, expired: true, excluded: false, finished: true,
   })
@@ -290,6 +293,8 @@ export default function App() {
       setSettings(s)
       setSaved(JSON.stringify(s))
     })
+    invoke<boolean>("get_autostart").then(setAutostart).catch(() => setAutostart(null))
+    invoke<string[]>("list_languages").then(setLanguages).catch(() => setLanguages([]))
     let un: (() => void) | undefined
     ;(async () => {
       un = await window.__TAURI__.event.listen("miner-event", (e) => handle(e.payload as MinerEvent))
@@ -336,6 +341,12 @@ export default function App() {
     invoke<Settings>("import_tdm", { path: tdmPath })
       .then((s) => { setSettings(s); setTdmMsg("Imported. Review, then Save.") })
       .catch((e) => setTdmMsg(String(e)))
+  }
+  const toggleAutostart = (on: boolean) => {
+    setAutostart(on)
+    invoke("set_autostart", { enabled: on })
+      .then(() => setAutostart(on))
+      .catch((e) => { setAutostart(!on); setTdmMsg(String(e)) })
   }
   const games = [...new Set(inventory.map((c) => c.game))].sort()
 
@@ -663,6 +674,23 @@ export default function App() {
                   checked={!!settings?.dark_mode}
                   onCheckedChange={(checked) => update({ dark_mode: !!checked })}
                 />
+                <label htmlFor="s-autostart">Autostart</label>
+                <Checkbox
+                  id="s-autostart"
+                  checked={!!autostart}
+                  onCheckedChange={(checked) => toggleAutostart(!!checked)}
+                  disabled={autostart == null}
+                />
+                <label>Language</label>
+                <Select
+                  value={settings?.language ?? "English"}
+                  onValueChange={(v) => update({ language: v as string })}
+                >
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {languages.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+                  </SelectContent>
+                </Select>
                 <label>Priority mode</label>
                 <Select
                   items={Object.fromEntries(MODES)}

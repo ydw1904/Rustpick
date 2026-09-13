@@ -1,13 +1,12 @@
 //! Headless frontend: prints miner events to stdout, Ctrl-C exits cleanly.
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use rustpick::events::{CampaignStatus, ChannelStatus};
 use rustpick::settings::{PriorityMode, data_dir};
 use rustpick::{Command, Event, Miner, Settings};
 use std::collections::BTreeSet;
 use tokio::sync::broadcast;
-
 #[derive(Parser)]
 #[command(name = "rustpick", version, about = "Headless Twitch drops miner (a port of TwitchDropsMiner)")]
 struct Cli {
@@ -24,7 +23,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Mine drops (the default when no subcommand is given)
-    Run,
+    Run {
+        /// Fetch the inventory once, write it to dump.dat and exit
+        #[arg(long)]
+        dump: bool,
+    },
     /// Print the settings file path and contents
     Show,
     /// Replace the game priority list (exact game names, highest priority first)
@@ -35,9 +38,13 @@ enum Cmd {
     Mode { mode: String },
     /// Toggle a flag: badges-emotes | drops-check | dark-mode
     Set { key: String, value: bool },
+    /// Set the UI language (run `rustpick language` for the list)
+    Language { name: Option<String> },
     /// Forget the saved Twitch login
     Logout,
-    /// Import settings from a TwitchDropsMiner install (its settings.json or its folder)
+    /// Show (no argument) or toggle login-time autostart: on | off
+    Autostart { state: Option<String> },
+    /// Import settings and login from a TwitchDropsMiner install (its settings.json or its folder)
     Import { path: std::path::PathBuf },
 }
 
@@ -46,8 +53,9 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     rustpick::init_logging(cli.verbose, cli.log)?;
     let mut settings = Settings::load()?;
-    match cli.cmd.unwrap_or(Cmd::Run) {
-        Cmd::Run => return run(settings).await,
+    rustpick::translate::init(&settings.language);
+    match cli.cmd.unwrap_or(Cmd::Run { dump: false }) {
+        Cmd::Run { dump } => return run(settings, dump).await,
         Cmd::Show => {
             println!("{}", Settings::path().display());
             println!("{}", serde_json::to_string_pretty(&settings)?);
@@ -65,21 +73,88 @@ async fn main() -> Result<()> {
             "dark-mode" => settings.dark_mode = value,
             other => bail!("unknown key '{other}'"),
         },
+        Cmd::Language { name } => match name {
+            None => {
+                println!("{}", rustpick::translate::LANGUAGES.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", "));
+                return Ok(());
+            }
+            Some(name) => {
+                settings.language = rustpick::translate::LANGUAGES
+                    .iter()
+                    .map(|(n, _)| *n)
+                    .find(|n| n.eq_ignore_ascii_case(&name))
+                    .ok_or_else(|| anyhow!("unknown language '{name}' (run `rustpick language` for the list)"))?
+                    .to_owned();
+            }
+        },
         Cmd::Logout => {
             let _ = std::fs::remove_file(data_dir().join("auth.json"));
             println!("Logged out.");
             return Ok(());
         }
-        Cmd::Import { path } => settings = Settings::import_tdm(&path)?,
+        Cmd::Autostart { state } => match state.as_deref() {
+            None => println!("Autostart is {}", if rustpick::autostart::enabled() { "on" } else { "off" }),
+            Some("on") => {
+                rustpick::autostart::set(true)?;
+                println!("Autostart enabled: {} runs at login.", std::env::current_exe()?.display());
+            }
+            Some("off") => {
+                rustpick::autostart::set(false)?;
+                println!("Autostart disabled.");
+            }
+            Some(other) => bail!("unknown autostart state '{other}' (use on or off)"),
+        },
+        Cmd::Import { path } => {
+            settings = Settings::import_tdm(&path)?;
+            rustpick::translate::init(&settings.language);
+            import_tdm_login(&path)?;
+        }
     }
     settings.save()?;
     println!("Saved {}", Settings::path().display());
     Ok(())
 }
 
-async fn run(settings: Settings) -> Result<()> {
+/// Look for a `cookies.jar` next to the TDM settings file and adopt its login
+/// session, so a migrated install doesn't need to log in again.
+fn import_tdm_login(path: &std::path::Path) -> Result<()> {
+    let dir = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent().map(std::path::Path::to_path_buf).unwrap_or_default()
+    };
+    match rustpick::http::import_tdm_cookies(&dir) {
+        Some((device_id, token)) => {
+            let device_id = if device_id.len() == 32 {
+                device_id
+            } else {
+                rustpick::util::nonce(rustpick::util::CHARS_HEX_LOWER, 32)
+            };
+            rustpick::http::save_auth_file(device_id, Some(token))?;
+            println!("Imported the login session from {}", dir.join("cookies.jar").display());
+        }
+        None => println!("No usable cookies.jar found next to the settings (you'll need to log in)."),
+    }
+    Ok(())
+}
+
+async fn run(settings: Settings, dump: bool) -> Result<()> {
+    let lock = rustpick::lock::SingleInstance::acquire(&data_dir().join("lock.file"));
+    let lock = match lock {
+        Ok(l) => l,
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            eprintln!("Another instance appears to be running ({e}). Exiting.");
+            std::process::exit(3);
+        }
+        Err(e) => return Err(e).context("Could not create the lock file"),
+    };
     let (events_tx, mut events) = broadcast::channel(1024);
-    let (miner, handle) = Miner::new(settings, events_tx)?;
+    let (miner, handle) = Miner::new(settings, events_tx, dump)?;
     let mut task = tokio::spawn(miner.run());
     let ctrlc_handle = handle.clone();
     tokio::spawn(async move {
@@ -90,16 +165,18 @@ async fn run(settings: Settings) -> Result<()> {
         std::process::exit(130);
     });
     let mut printer = Printer::default();
-    loop {
+    let result = loop {
         tokio::select! {
-            r = &mut task => return r?,
+            r = &mut task => break r?,
             ev = events.recv() => match ev {
                 Ok(e) => printer.print(e),
                 Err(broadcast::error::RecvError::Lagged(n)) => eprintln!("(dropped {n} events)"),
-                Err(broadcast::error::RecvError::Closed) => return task.await?,
+                Err(broadcast::error::RecvError::Closed) => break task.await?,
             }
         }
-    }
+    };
+    drop(lock);
+    result
 }
 
 #[derive(Default)]

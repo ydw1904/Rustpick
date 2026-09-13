@@ -4,13 +4,17 @@
 //! and accepts [`Command`]s through a [`MinerHandle`]. `src/bin/cli.rs` and `src/bin/gui.rs`
 //! are thin frontends over it.
 
+pub mod autostart;
 pub mod channel;
 pub mod constants;
 pub mod events;
 pub mod http;
 pub mod inventory;
+pub mod lock;
 pub mod miner;
+pub mod pickle;
 pub mod settings;
+pub mod translate;
 pub mod util;
 pub mod websocket;
 

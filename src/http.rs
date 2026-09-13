@@ -3,6 +3,7 @@
 use crate::constants::{ANDROID_APP, ClientInfo, GQL_URL};
 use crate::events::Event;
 use crate::settings::{Settings, data_dir};
+use crate::t;
 use crate::util::{Backoff, CHARS_HEX_LOWER, nonce};
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{Duration as ChronoDuration, Utc};
@@ -10,7 +11,7 @@ use rand::seq::IndexedRandom;
 use reqwest::{Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
@@ -27,6 +28,23 @@ struct AuthFile {
     access_token: Option<String>,
 }
 
+/// Persist a login session. Also used by the TwitchDropsMiner cookie import.
+pub fn save_auth_file(device_id: String, access_token: Option<String>) -> Result<()> {
+    let path = data_dir().join("auth.json");
+    std::fs::create_dir_all(data_dir())?;
+    std::fs::write(&path, serde_json::to_string_pretty(&AuthFile { device_id, access_token })?)?;
+    Ok(())
+}
+
+/// Import a login session from a TwitchDropsMiner install's `cookies.jar`
+/// (a pickled aiohttp cookie jar). Returns `(device_id, token)` if a token was found.
+pub fn import_tdm_cookies(tdm_dir: &Path) -> Option<(String, String)> {
+    let data = std::fs::read(tdm_dir.join("cookies.jar")).ok()?;
+    let token = crate::pickle::cookie_value(&data, "auth-token")?;
+    let device_id = crate::pickle::cookie_value(&data, "unique_id").unwrap_or_default();
+    Some((device_id, token))
+}
+
 pub struct Http {
     client: Client,
     pub info: &'static ClientInfo,
@@ -38,7 +56,6 @@ pub struct Http {
     // ponytail: fixed 5 req/s window like upstream; do not loosen, GQL rate limits bite hard.
     limiter: Mutex<(Instant, u32)>,
     events: broadcast::Sender<Event>,
-    auth_path: PathBuf,
 }
 
 impl Http {
@@ -72,7 +89,6 @@ impl Http {
             user_id: OnceLock::new(),
             limiter: Mutex::new((Instant::now(), 0)),
             events,
-            auth_path,
         }))
     }
 
@@ -89,13 +105,7 @@ impl Http {
     }
 
     fn save_auth(&self) -> Result<()> {
-        let file = AuthFile {
-            device_id: self.device_id.clone(),
-            access_token: self.token.lock().unwrap().clone(),
-        };
-        std::fs::create_dir_all(data_dir())?;
-        std::fs::write(&self.auth_path, serde_json::to_string_pretty(&file)?)?;
-        Ok(())
+        save_auth_file(self.device_id.clone(), self.token.lock().unwrap().clone())
     }
 
     fn with_headers(&self, rb: RequestBuilder) -> RequestBuilder {
@@ -126,17 +136,16 @@ impl Http {
                 Ok(resp) if resp.status().as_u16() < 500 => return Ok(resp),
                 Ok(resp) => {
                     tracing::debug!("{} from {}", resp.status(), resp.url());
-                    self.print(format!("Twitch is down, retrying in {} seconds...", delay.as_secs()));
+                    self.print(t!["error", "site_down"; "seconds" => delay.as_secs().to_string()]);
                 }
                 Err(e) if e.to_string().contains("certificate") => return Err(e.into()),
                 Err(e) if e.is_connect() || e.is_timeout() || e.is_request() || e.is_body() => {
                     tracing::debug!("request error: {e}");
                     if backoff.steps() > 1 {
-                        self.print(format!(
-                            "Cannot connect to Twitch, retrying in {} seconds... ({})",
-                            delay.as_secs(),
-                            e.url().map(|u| u.as_str()).unwrap_or("?")
-                        ));
+                        self.print(t!["error", "no_connection";
+                            "seconds" => delay.as_secs().to_string(),
+                            "url" => e.url().map(|u| u.as_str()).unwrap_or("?").to_owned(),
+                        ]);
                     }
                 }
                 Err(e) => return Err(e.into()),
@@ -246,7 +255,7 @@ impl Http {
 
     /// Restore the saved token or run the device-code flow, then validate it.
     pub async fn login(&self) -> Result<()> {
-        let _ = self.events.send(Event::Status("Logging in...".into()));
+        let _ = self.events.send(Event::Status(t!["gui", "login", "logging_in"].into()));
         for _ in 0..3 {
             let saved = self.token.lock().unwrap().clone();
             let token = match saved {
@@ -318,7 +327,7 @@ impl Http {
             let url = v["verification_uri"].as_str().unwrap_or("https://www.twitch.tv/activate").to_owned();
             let interval = v["interval"].as_u64().unwrap_or(5);
             let expires_at = started + ChronoDuration::seconds(v["expires_in"].as_i64().unwrap_or(1800));
-            self.print(format!("Login required: open {url} and enter the code {user_code}"));
+            self.print(t!["login", "device_code"; "url" => url.clone(), "code" => user_code.clone()]);
             let _ = self.events.send(Event::LoginCode { url, code: user_code });
             loop {
                 sleep(Duration::from_secs(interval)).await;

@@ -5,6 +5,8 @@ settings.json.new
 auth.json
 log.txt
 cookies.jar
+lock.file
+dump.dat
 reference/
 
 # Tauri codegen

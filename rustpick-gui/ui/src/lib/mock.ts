@@ -10,6 +10,7 @@ const settings = {
   enable_badges_emotes: false,
   available_drops_check: true,
   dark_mode: new URLSearchParams(location.search).get("dark") === "1",
+  language: "English",
 }
 
 const channels = [
@@ -70,6 +71,9 @@ export function install() {
       invoke: async (cmd, args) => {
         if (cmd === "get_settings") return settings
         if (cmd === "save_settings") Object.assign(settings, args?.settings as object)
+        if (cmd === "get_autostart") return false
+        if (cmd === "set_autostart") log(`Autostart ${args?.enabled ? "enabled" : "disabled"}`)
+        if (cmd === "list_languages") return ["English", "Deutsch", "Français", "Русский", "简体中文"]
         if (cmd === "frontend_ready") setTimeout(boot, 50)
         if (cmd === "select") log(`Switching to channel ${args?.id ?? "(auto)"}`)
         if (cmd === "reload") log("Reloading…")

@@ -6,7 +6,8 @@ use crate::constants::{MAX_CHANNELS, ONLINE_DELAY, WATCH_INTERVAL, gql, topic};
 use crate::events::*;
 use crate::http::Http;
 use crate::inventory::Campaign;
-use crate::settings::{PriorityMode, Settings};
+use crate::settings::{PriorityMode, Settings, data_dir};
+use crate::t;
 use crate::util::{json_str, json_u64, timestamp};
 use crate::websocket::WsPool;
 use anyhow::{Context, Result};
@@ -61,6 +62,8 @@ pub struct Miner {
     state: State,
     /// Set whenever the state machine should run another step before waiting for messages.
     dirty: bool,
+    /// `--dump` mode: fetch the inventory, write dump.dat, exit. Ported from upstream.
+    dump: bool,
     inventory: Vec<Campaign>,
     wanted_games: Vec<Game>,
     channels: Vec<Channel>,
@@ -76,7 +79,7 @@ pub struct Miner {
 }
 
 impl Miner {
-    pub fn new(settings: Settings, events: broadcast::Sender<Event>) -> Result<(Miner, MinerHandle)> {
+    pub fn new(settings: Settings, events: broadcast::Sender<Event>, dump: bool) -> Result<(Miner, MinerHandle)> {
         let http = Http::new(&settings, events.clone())?;
         let (tx, rx) = mpsc::unbounded_channel();
         let (watch_tx, watch_rx) = watch::channel(None);
@@ -89,6 +92,7 @@ impl Miner {
             rx,
             state: State::Idle,
             dirty: true,
+            dump,
             inventory: Vec::new(),
             wanted_games: Vec::new(),
             channels: Vec::new(),
@@ -117,6 +121,10 @@ impl Miner {
     }
 
     async fn run_inner(&mut self) -> Result<()> {
+        if self.dump {
+            // replace the existing dump file with an empty one
+            std::fs::File::create(data_dir().join("dump.dat")).context("creating dump.dat")?;
+        }
         let http = self.http.clone();
         tokio::select! {
             r = http.login() => r?,
@@ -384,7 +392,7 @@ impl Miner {
         let _ = self.watch_tx.send(Some(target));
         let _ = self.events.send(Event::Watching(Some(id)));
         if update_status {
-            let s = format!("Watching: {name}");
+            let s = t!["status", "watching"; "channel" => name];
             self.print(s.clone());
             self.status(s);
         }
@@ -496,7 +504,7 @@ impl Miner {
         match (before, after) {
             (None, Some(_)) => {
                 if self.should_switch(&ch) {
-                    self.print(format!("{name} goes ONLINE, switching..."));
+                    self.print(t!["status", "goes_online"; "channel" => name]);
                     self.watch(id, true);
                 } else {
                     tracing::info!("{name} goes ONLINE");
@@ -507,7 +515,7 @@ impl Miner {
                 if self.watching == Some(id) {
                     if !self.can_watch(&ch) {
                         match after {
-                            None => self.print(format!("{name} goes OFFLINE, switching...")),
+                            None => self.print(t!["status", "goes_offline"; "channel" => name]),
                             Some(a) => tracing::info!(
                                 "{name} status has been updated, switching... (drops: {} -> {})",
                                 flag(b),
@@ -788,13 +796,14 @@ impl Miner {
         if ok {
             self.inventory[ci].mark_claimed(di);
             let c = &self.inventory[ci];
-            self.print(format!(
-                "Claimed drop: {} {} ({}/{})",
+            let drop_text = format!(
+                "{} {} ({}/{})",
                 c.game.name,
                 c.drops[di].rewards_text(),
                 c.claimed_drops(),
                 c.total_drops()
-            ));
+            );
+            self.print(t!["status", "claimed_drop"; "drop" => drop_text]);
             self.emit_inventory();
         } else {
             tracing::error!("Drop claim has potentially failed! Drop ID: {drop_id}");
@@ -807,7 +816,11 @@ impl Miner {
     async fn step(&mut self) -> Result<()> {
         match self.state {
             State::Idle => {
-                self.status("Idle");
+                if self.dump {
+                    self.state = State::Exit; // dump mode: we're done once idle
+                    return Ok(());
+                }
+                self.status(t!["gui", "status", "idle"]);
                 self.stop_watching();
             }
             State::InventoryFetch => {
@@ -820,7 +833,13 @@ impl Miner {
             State::GamesUpdate => self.games_update().await,
             State::ChannelsCleanup => self.channels_cleanup(),
             State::ChannelsFetch => self.channels_fetch().await?,
-            State::ChannelSwitch => self.channel_switch(),
+            State::ChannelSwitch => {
+                if self.dump {
+                    self.state = State::Exit; // dump mode: we're done once the channels are in
+                    return Ok(());
+                }
+                self.channel_switch();
+            }
             State::Exit => {}
         }
         Ok(())
@@ -883,7 +902,7 @@ impl Miner {
     }
 
     fn channels_cleanup(&mut self) {
-        self.status("Cleaning up channels...");
+        self.status(t!["gui", "status", "cleanup"]);
         let to_remove: Vec<u64> = if self.wanted_games.is_empty() || self.full_cleanup {
             self.channels.iter().map(|c| c.id).collect()
         } else {
@@ -911,7 +930,7 @@ impl Miner {
             self.emit_channels();
         }
         if self.wanted_games.is_empty() {
-            self.print("No active campaigns to mine drops for. Waiting for an active campaign...");
+            self.print(t!["status", "no_campaign"]);
             self.change_state(State::Idle);
         } else {
             self.change_state(State::ChannelsFetch);
@@ -919,7 +938,7 @@ impl Miner {
     }
 
     async fn channels_fetch(&mut self) -> Result<()> {
-        self.status("Gathering channels...");
+        self.status(t!["gui", "status", "gathering"]);
         let badges = self.badges_ok();
         let next_hour = Utc::now() + ChronoDuration::hours(1);
         let mut new_channels: Vec<Channel> = std::mem::take(&mut self.channels);
@@ -1001,7 +1020,7 @@ impl Miner {
     }
 
     fn channel_switch(&mut self) {
-        self.status("Switching the channel...");
+        self.status(t!["gui", "status", "switching"]);
         let mut new_watching: Option<u64> = None;
         if let Some(sel) = self.selected.and_then(|id| self.channel(id))
             && self.can_watch(sel)
@@ -1022,10 +1041,9 @@ impl Miner {
         } else if let Some(w) = self.watching_channel()
             && self.can_watch(w)
         {
-            let s = format!("Watching: {}", w.name());
-            self.status(s);
+            self.status(t!["status", "watching"; "channel" => w.name()]);
         } else {
-            self.print("No available channels to watch. Waiting for an ONLINE channel...");
+            self.print(t!["status", "no_channel"]);
             self.change_state(State::Idle);
         }
     }
@@ -1033,7 +1051,7 @@ impl Miner {
     // ---- fetching ------------------------------------------------------------------------
 
     async fn fetch_inventory(&mut self) -> Result<()> {
-        self.status("Fetching inventory...");
+        self.status(t!["gui", "status", "fetching_inventory"]);
         let resp = self.http.gql(gql::inventory()).await?;
         let inv = resp.pointer("/data/currentUser/inventory").cloned().unwrap_or(Value::Null);
         let claimed_benefits: HashMap<String, DateTime<Utc>> = inv
@@ -1063,7 +1081,7 @@ impl Miner {
             .filter(|c| matches!(c["status"].as_str(), Some("ACTIVE" | "UPCOMING")))
             .filter_map(|c| Some((json_str(c.get("id")?)?, c)))
             .collect();
-        self.status(format!("Fetching {} campaigns...", available.len()));
+        self.status(t!["gui", "status", "adding_campaigns"; "counter" => available.len().to_string()]);
         let uid = self.http.user_id();
         let mut set = JoinSet::new();
         for chunk in available.chunks(20) {
@@ -1076,6 +1094,9 @@ impl Miner {
             inventory_data = merge_maps(inventory_data, data);
         }
         inventory_data.retain(|_, c| !c["game"].is_null());
+        if self.dump {
+            self.write_dump(&inventory_data, inv.get("gameEventDrops").cloned().unwrap_or(Value::Null))?;
+        }
         let badges = self.badges_ok();
         let mut campaigns: Vec<Campaign> = inventory_data
             .values()
@@ -1108,6 +1129,45 @@ impl Miner {
             h.abort();
         }
         self.mnt_task = Some(tokio::spawn(maintenance(triggers, self.tx.clone())).abort_handle());
+        Ok(())
+    }
+
+    /// Append the merged campaign data to dump.dat, ACL lists reduced to counts and
+    /// drop instance IDs masked. Ported from upstream's dump mode.
+    fn write_dump(&self, inventory_data: &Map<String, Value>, game_event_drops: Value) -> Result<()> {
+        let mut dump_data = inventory_data.clone();
+        for campaign in dump_data.values_mut() {
+            let enabled = campaign.pointer("/allow/isEnabled").and_then(Value::as_bool).unwrap_or(true);
+            if let Some(channels) = campaign.pointer_mut("/allow/channels") {
+                let count = channels.as_array().map(Vec::len).unwrap_or(0);
+                if enabled && count > 0 {
+                    *channels = Value::String(format!("{count} channels"));
+                }
+            }
+            if let Some(drops) = campaign.get_mut("timeBasedDrops").and_then(Value::as_array_mut) {
+                for drop in drops {
+                    let has_instance =
+                        !drop.pointer("/self/dropInstanceID").unwrap_or(&Value::Null).is_null();
+                    if has_instance
+                        && let Some(self_obj) = drop.get_mut("self").and_then(Value::as_object_mut)
+                    {
+                        self_obj.insert("dropInstanceID".to_owned(), "...".into());
+                    }
+                }
+            }
+        }
+        let text = format!(
+            "{}\n\n{}\n",
+            serde_json::to_string_pretty(&Value::Object(dump_data))?,
+            serde_json::to_string_pretty(&game_event_drops)?
+        );
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(data_dir().join("dump.dat"))?
+            .write_all(text.as_bytes())?;
+        self.print(format!("Dumped inventory data to {}", data_dir().join("dump.dat").display()));
         Ok(())
     }
 

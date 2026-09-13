@@ -49,6 +49,8 @@ pub struct Settings {
     pub enable_badges_emotes: bool,
     pub available_drops_check: bool,
     pub dark_mode: bool,
+    /// UI language for the core's messages; one of `translate::LANGUAGES`.
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -62,6 +64,7 @@ impl Default for Settings {
             enable_badges_emotes: false,
             available_drops_check: false,
             dark_mode: false,
+            language: "English".to_owned(),
         }
     }
 }
@@ -101,8 +104,8 @@ impl Settings {
     /// Build settings from a TwitchDropsMiner install. `path` is either its
     /// `settings.json` or the folder containing it. TDM wraps `set`/`Enum`/`URL`
     /// values as `{"__type":..,"data":..}`; [`tdm_data`] unwraps those. Fields TDM
-    /// has but Rustpick lacks (language, autostart_tray, tray_notifications) are
-    /// ignored. Fields missing from the file keep our defaults.
+    /// has but Rustpick lacks (autostart_tray, tray_notifications) are ignored.
+    /// Fields missing from the file keep our defaults.
     pub fn import_tdm(path: &Path) -> Result<Self> {
         let file = if path.is_dir() { path.join("settings.json") } else { path.to_path_buf() };
         let text = std::fs::read_to_string(&file)
@@ -138,6 +141,14 @@ impl Settings {
         }
         if let Some(b) = tdm_data(&v, "available_drops_check").and_then(|x| x.as_bool()) {
             s.available_drops_check = b;
+        }
+        if let Some(lang) = tdm_data(&v, "language").and_then(|x| x.as_str()) {
+            s.language = crate::translate::LANGUAGES
+                .iter()
+                .map(|(name, _)| *name)
+                .find(|n| n.eq_ignore_ascii_case(lang))
+                .unwrap_or("English")
+                .to_owned();
         }
         Ok(s)
     }
@@ -182,6 +193,19 @@ mod tests {
         assert_eq!(s.connection_quality, 6); // clamped from 9
         assert!(s.dark_mode);
         assert!(s.enable_badges_emotes);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn import_tdm_language() {
+        let dir = std::env::temp_dir().join(format!("rustpick-tdm-lang-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), r#"{"language": "DEUTSCH"}"#).unwrap();
+        let s = Settings::import_tdm(&dir).unwrap();
+        assert_eq!(s.language, "Deutsch");
+        std::fs::write(dir.join("settings.json"), r#"{"language": "Klingon"}"#).unwrap();
+        let s = Settings::import_tdm(&dir).unwrap();
+        assert_eq!(s.language, "English");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
