@@ -461,6 +461,18 @@ fn save_settings(app: AppHandle, settings: Settings) {
     apply_settings(&app, settings);
 }
 
+/// Native file picker for TDM's settings.json. `None` when the user cancels.
+#[tauri::command]
+async fn pick_tdm_settings(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog()
+        .file()
+        .set_title("TwitchDropsMiner settings.json")
+        .add_filter("settings.json", &["json"])
+        .blocking_pick_file()
+        .map(|p| p.to_string())
+}
+
 /// Parse a TwitchDropsMiner settings file/folder and hand the values back to the
 /// page. The user reviews them in the form and clicks Save to commit.
 #[tauri::command]
@@ -664,6 +676,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             handle,
             settings: Mutex::new(settings),
@@ -676,6 +689,7 @@ fn main() {
             get_settings,
             save_settings,
             import_tdm,
+            pick_tdm_settings,
             get_autostart,
             set_autostart,
             list_languages,

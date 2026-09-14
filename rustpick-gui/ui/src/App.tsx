@@ -13,7 +13,10 @@ import {
   Image01Icon,
   LinkSquare02Icon,
   LockIcon,
+  MonitorIcon,
+  Moon02Icon,
   RefreshIcon,
+  Sun03Icon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons"
 import logo from "./assets/rustpick_logo.png"
@@ -479,22 +482,22 @@ export default function App() {
 
   return (
     <Tabs value={tab} onValueChange={(v) => setTab(v as string)} className="app-shell h-screen gap-0 bg-background">
-      <header className="app-header flex h-14 shrink-0 items-center gap-4 border-b px-4">
+      <header data-tauri-drag-region className="app-header flex h-[84px] shrink-0 items-center gap-4 border-b px-4 pt-7">
         <div className="flex min-w-0 items-center gap-3">
           <img src={logo} alt="Rustpick" className="h-8 w-auto shrink-0" />
           <span className="h-4 w-px bg-border" />
-          <span className={cn("flex min-w-0 items-center gap-2 rounded-full bg-card/70 px-2.5 py-1 text-xs font-medium ring-1 ring-foreground/10", statusCls)} title={esc(status)}>
-            <Dot />
-            <span className="max-w-40 truncate text-foreground/80">{esc(status)}</span>
-          </span>
         </div>
-        <TabsList className="ml-auto bg-card/70 shadow-sm ring-1 ring-foreground/10 backdrop-blur">
+        <TabsList className="bg-card/70 shadow-sm ring-1 ring-foreground/10 backdrop-blur">
           <TabsTrigger value="main" className="px-3">Main</TabsTrigger>
           <TabsTrigger value="inventory" className="px-3">Inventory</TabsTrigger>
           <TabsTrigger value="log" className="px-3">Log</TabsTrigger>
           <TabsTrigger value="settings" className="px-3">Settings</TabsTrigger>
           <TabsTrigger value="help" className="px-3">Help</TabsTrigger>
         </TabsList>
+        <span className={cn("ml-auto flex min-w-0 items-center gap-2 rounded-full bg-card/70 px-2.5 py-1 text-xs font-medium ring-1 ring-foreground/10", statusCls)} title={esc(status)}>
+          <Dot />
+          <span className="max-w-40 truncate text-foreground/80">{esc(status)}</span>
+        </span>
       </header>
       {release && (
         <div className="update-banner flex shrink-0 items-center gap-3 border-b px-4 py-2 text-sm">
@@ -692,8 +695,27 @@ export default function App() {
 
       {/* ===== INVENTORY ===== */}
       <TabsContent value="inventory" className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl bg-card px-3 py-2 ring-1 ring-foreground/10">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex flex-col gap-2.5 rounded-xl bg-card p-3 ring-1 ring-foreground/10">
+          <div className="flex items-center gap-2">
+            <Input
+              className="min-w-48 flex-1"
+              aria-label="Search campaigns"
+              placeholder="Search game or campaign"
+              value={inv.search}
+              onChange={(e) => setInv((v) => ({ ...v, search: e.target.value }))}
+            />
+            <Select items={Object.fromEntries(SORTS)} value={inv.sort} onValueChange={(v) => setInv((x) => ({ ...x, sort: v as Sort }))}>
+              <SelectTrigger className="w-44" aria-label="Sort campaigns"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SORTS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" onClick={() => invoke("reload")}>
+              <HugeiconsIcon icon={RefreshIcon} size={14} strokeWidth={2} data-icon="inline-start" />
+              Refresh
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-2.5">
             <span className="text-sm text-muted-foreground">Show</span>
             {FILTERS.map(([key, label]) => (
               <label key={key} className="flex cursor-pointer items-center gap-1.5 text-sm">
@@ -704,24 +726,6 @@ export default function App() {
                 {label}
               </label>
             ))}
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Input
-              className="h-8 w-44"
-              placeholder="Search game or campaign"
-              value={inv.search}
-              onChange={(e) => setInv((v) => ({ ...v, search: e.target.value }))}
-            />
-            <Select items={Object.fromEntries(SORTS)} value={inv.sort} onValueChange={(v) => setInv((x) => ({ ...x, sort: v as Sort }))}>
-              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {SORTS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Button size="sm" variant="outline" onClick={() => invoke("reload")}>
-              <HugeiconsIcon icon={RefreshIcon} size={14} strokeWidth={2} data-icon="inline-start" />
-              Refresh
-            </Button>
           </div>
         </div>
         {visibleCampaigns.map((c) => {
@@ -801,20 +805,33 @@ export default function App() {
         <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr]">
           <div className="flex flex-col gap-3 md:col-span-2 xl:col-span-1">
             <Card size="sm">
-              <CardHeader><CardTitle>General</CardTitle></CardHeader>
-              <CardContent className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-3 text-sm">
-                <label htmlFor="s-theme">Theme</label>
-                <Select
-                  value={settings?.theme ?? "system"}
-                  onValueChange={(v) => update({ theme: v as Settings["theme"] })}
-                >
-                  <SelectTrigger id="s-theme" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="system">System</SelectItem>
-                    <SelectItem value="light">Light</SelectItem>
-                    <SelectItem value="dark">Dark</SelectItem>
-                  </SelectContent>
-                </Select>
+              <CardHeader><CardTitle className="text-lg! font-semibold">General</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-[auto_minmax(0,30rem)] items-center justify-start gap-x-4 gap-y-3 text-sm">
+                <span>Theme</span>
+                <div className="flex w-fit gap-0.5 rounded-lg border bg-muted/30 p-0.5" role="group" aria-label="Theme">
+                  {([
+                    ["system", MonitorIcon, "System"],
+                    ["light", Sun03Icon, "Light"],
+                    ["dark", Moon02Icon, "Dark"],
+                  ] as const).map(([value, icon, label]) => {
+                    const active = (settings?.theme ?? "system") === value
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => update({ theme: value })}
+                        className={cn(
+                          "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
+                          active ? "bg-primary/15 text-foreground" : "text-muted-foreground",
+                        )}
+                      >
+                        <HugeiconsIcon icon={icon} strokeWidth={2} className={cn("size-3.5", active && "text-primary")} />
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
                 <label htmlFor="s-autostart">Autostart</label>
                 <Checkbox
                   id="s-autostart"
@@ -909,7 +926,7 @@ export default function App() {
             </Card>
             <Card size="sm">
               <CardHeader>
-                <CardTitle>Advanced</CardTitle>
+                <CardTitle className="text-lg! font-semibold">Advanced</CardTitle>
                 <CardDescription className={WARN}>
                   These options can make the miner misbehave. Turn them off if you hit issues.
                 </CardDescription>
@@ -933,10 +950,10 @@ export default function App() {
             </Card>
             <Card size="sm">
               <CardHeader>
-                <CardTitle>Import from TwitchDropsMiner</CardTitle>
+                <CardTitle className="text-lg! font-semibold">Import from TwitchDropsMiner</CardTitle>
                 <CardDescription>
-                  Paste the path to TDM&apos;s <code>settings.json</code> (or its folder). Loads its
-                  values into the form; Save to keep them.
+                  Pick TDM&apos;s <code>settings.json</code> (it sits next to the TwitchDropsMiner app) or paste
+                  its folder. Loads its values into the form; Save to keep them.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-2 text-sm">
@@ -946,6 +963,7 @@ export default function App() {
                     value={tdmPath}
                     onChange={(e) => setTdmPath(e.target.value)}
                   />
+                  <Button size="sm" variant="outline" onClick={() => invoke<string | null>("pick_tdm_settings").then((p) => p && setTdmPath(p))}>Browse…</Button>
                   <Button size="sm" variant="outline" disabled={!tdmPath} onClick={importTdm}>Import</Button>
                 </div>
                 {tdmMsg && <span className="text-xs text-muted-foreground">{tdmMsg}</span>}
@@ -955,7 +973,7 @@ export default function App() {
 
           <Card size="sm">
             <CardHeader>
-              <CardTitle>Priority</CardTitle>
+              <CardTitle className="text-lg! font-semibold">Priority</CardTitle>
               <CardDescription>Games to mine first, in order.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
@@ -992,7 +1010,7 @@ export default function App() {
 
           <Card size="sm">
             <CardHeader>
-              <CardTitle>Exclude</CardTitle>
+              <CardTitle className="text-lg! font-semibold">Exclude</CardTitle>
               <CardDescription>Games that are never mined.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
