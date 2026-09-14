@@ -13,6 +13,7 @@ const settings = {
   language: "English",
   tray_notifications: true,
   notify_url: "",
+  check_updates: true,
   active_hours: null as [number, number] | null,
   autostart_tray: false,
 }
@@ -81,6 +82,10 @@ export function install() {
         if (cmd === "frontend_ready") setTimeout(boot, 50)
         if (cmd === "select") log(`Switching to channel ${args?.id ?? "(auto)"}`)
         if (cmd === "reload") log("Reloading…")
+        if (cmd === "get_log") return [
+          { kind: "Log", data: { ts: new Date().toISOString(), level: "WARN", msg: "Websocket[2] connection problem: timed out (sleep: 5s)" } },
+          { kind: "Log", data: { ts: new Date().toISOString(), level: "ERROR", msg: "Drop claim has potentially failed! Drop ID: d1" } },
+        ]
         if (cmd === "set_paused") emit("Paused", args?.paused)
         if (cmd === "open_url" || cmd === "copy_text") log(`${cmd}: ${JSON.stringify(args)}`)
         return null
@@ -101,6 +106,7 @@ function boot() {
     return
   }
   emit("LoggedIn", { user_id: 12345678 })
+  emit("UpdateAvailable", { version: "v0.2.0", url: "https://github.com/ydw1904/Rustpick/releases/tag/v0.2.0" })
   emit("Status", "Watching Rustafied")
   for (let i = 0; i < 3; i++) emit("Websocket", { idx: i, status: "Connected", topics: i === 2 ? 12 : 50 })
   emit("Channels", channels)

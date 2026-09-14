@@ -122,6 +122,25 @@ impl WsPool {
     }
 }
 
+/// Connect to PubSub, PING, wait for the PONG and close (for `rustpick check`).
+pub async fn check(proxy: &str) -> Result<()> {
+    let mut ws = connect(proxy).await?;
+    send_json(&mut ws, json!({"type": "PING"})).await?;
+    let pong = timeout(PING_TIMEOUT, async {
+        while let Some(m) = ws.next().await {
+            if let Message::Text(t) = m? {
+                if serde_json::from_str::<Value>(&t)?["type"] == "PONG" {
+                    return Ok(());
+                }
+            }
+        }
+        bail!("socket closed before PONG")
+    })
+    .await;
+    let _ = ws.close(None).await;
+    pong.map_err(|_| anyhow::anyhow!("no PONG within {}s", PING_TIMEOUT.as_secs()))?
+}
+
 /// Open the PubSub socket, through the HTTP proxy when one is configured.
 async fn connect(proxy: &str) -> Result<Socket> {
     if proxy.is_empty() {
