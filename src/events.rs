@@ -26,6 +26,8 @@ pub enum Event {
     /// Device-code login: the user must open `url` and enter `code`.
     LoginCode { url: String, code: String },
     LoggedIn { user_id: u64 },
+    /// A drop was claimed; the payload is the translated "Claimed drop: ..." line.
+    DropClaimed(String),
     Websocket { idx: usize, status: String, topics: usize },
     Channels(Vec<ChannelView>),
     Watching(Option<u64>),

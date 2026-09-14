@@ -1,7 +1,8 @@
 //! Login-time autostart, ported from upstream's `update_autostart`: a Windows
 //! registry Run entry, a freedesktop `.desktop` file, or a launchd plist.
 //!
-//! The entry starts `rustpick run` with `RUSTPICK_DIR` baked in, since our data
+//! The entry starts our own executable with the caller's arguments (`run` for the
+//! CLI, `--tray` for the GUI) and `RUSTPICK_DIR` baked in, since our data
 //! directory is resolved from the environment/current directory.
 
 use crate::settings::data_dir;
@@ -42,12 +43,16 @@ mod imp {
             && stdout.contains(dir.to_string_lossy().as_ref())
     }
 
-    pub fn set(on: bool) -> Result<()> {
+    pub fn set(on: bool, args: &[&str]) -> Result<()> {
         if on {
             let (exe, dir) = entry_paths()?;
-            // cmd strips the outer quotes, leaving: set "RUSTPICK_DIR=..." && "exe" run
-            let data =
-                format!(r#"cmd /c "set "RUSTPICK_DIR={}" && "{}" run""#, dir.display(), exe.display());
+            // cmd strips the outer quotes, leaving: set "RUSTPICK_DIR=..." && "exe" args
+            let data = format!(
+                r#"cmd /c "set "RUSTPICK_DIR={}" && "{}" {}""#,
+                dir.display(),
+                exe.display(),
+                args.join(" ")
+            );
             reg(&["add", RUN_KEY, "/v", VALUE_NAME, "/t", "REG_SZ", "/d", &data, "/f"])?;
         } else {
             let _ = reg(&["delete", RUN_KEY, "/v", VALUE_NAME, "/f"]); // missing is fine
@@ -72,11 +77,12 @@ mod imp {
             .join(format!("{DESKTOP_NAME}.desktop"))
     }
 
-    pub(super) fn entry_contents(exe: &Path, dir: &Path) -> String {
+    pub(super) fn entry_contents(exe: &Path, dir: &Path, args: &[&str]) -> String {
         format!(
-            "[Desktop Entry]\nType=Application\nName=Rustpick\nDescription=Mine timed drops on Twitch\nExec=sh -c 'RUSTPICK_DIR=\"{}\" \"{}\" run'\n",
+            "[Desktop Entry]\nType=Application\nName=Rustpick\nDescription=Mine timed drops on Twitch\nExec=sh -c 'RUSTPICK_DIR=\"{}\" \"{}\" {}'\n",
             dir.display(),
-            exe.display()
+            exe.display(),
+            args.join(" ")
         )
     }
 
@@ -89,7 +95,7 @@ mod imp {
             })
     }
 
-    pub fn set(on: bool) -> Result<()> {
+    pub fn set(on: bool, args: &[&str]) -> Result<()> {
         let path = entry_path();
         if on {
             let (exe, dir) = entry_paths()?;
@@ -97,7 +103,7 @@ mod imp {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
             }
-            std::fs::write(&path, entry_contents(&exe, &dir))
+            std::fs::write(&path, entry_contents(&exe, &dir, args))
                 .with_context(|| format!("writing {}", path.display()))?;
         } else {
             std::fs::remove_file(&path).ok(); // missing is fine
@@ -123,7 +129,8 @@ mod imp {
         s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
     }
 
-    pub(super) fn entry_contents(exe: &Path, dir: &Path) -> String {
+    pub(super) fn entry_contents(exe: &Path, dir: &Path, args: &[&str]) -> String {
+        let args: String = args.iter().map(|a| format!("  <string>{}</string>\n", xml_escape(a))).collect();
         format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
              <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
@@ -139,7 +146,7 @@ mod imp {
              \x20<key>ProgramArguments</key>\n\
              \x20<array>\n\
              \x20\x20<string>{}</string>\n\
-             \x20\x20<string>run</string>\n\
+             {args}\
              \x20</array>\n\
              \x20<key>RunAtLoad</key>\n\
              \x20<true/>\n\
@@ -159,7 +166,7 @@ mod imp {
             })
     }
 
-    pub fn set(on: bool) -> Result<()> {
+    pub fn set(on: bool, args: &[&str]) -> Result<()> {
         let path = entry_path();
         if on {
             let (exe, dir) = entry_paths()?;
@@ -167,7 +174,7 @@ mod imp {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
             }
-            std::fs::write(&path, entry_contents(&exe, &dir))
+            std::fs::write(&path, entry_contents(&exe, &dir, args))
                 .with_context(|| format!("writing {}", path.display()))?;
         } else {
             std::fs::remove_file(&path).ok(); // missing is fine
@@ -184,7 +191,7 @@ mod imp {
         false
     }
 
-    pub fn set(_on: bool) -> Result<()> {
+    pub fn set(_on: bool, _args: &[&str]) -> Result<()> {
         anyhow::bail!("autostart is not supported on this platform")
     }
 }
@@ -194,9 +201,9 @@ pub fn enabled() -> bool {
     imp::enabled()
 }
 
-/// Create or remove the autostart entry.
-pub fn set(on: bool) -> Result<()> {
-    imp::set(on)
+/// Create or remove the autostart entry; `args` follow the executable.
+pub fn set(on: bool, args: &[&str]) -> Result<()> {
+    imp::set(on, args)
 }
 
 #[cfg(test)]
@@ -210,16 +217,18 @@ mod tests {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let (exe, dir) = entry_paths().unwrap();
-            let contents = imp::entry_contents(&exe, &dir);
+            let contents = imp::entry_contents(&exe, &dir, &["run", "--tray"]);
             assert!(contents.contains("RUSTPICK_DIR"));
             assert!(contents.contains("run"));
             if cfg!(target_os = "linux") {
                 assert!(contents.starts_with("[Desktop Entry]"));
                 assert!(contents.contains("Exec=sh -c 'RUSTPICK_DIR="));
+                assert!(contents.contains("\" run --tray'"));
             }
             if cfg!(target_os = "macos") {
                 assert!(contents.contains("<key>RunAtLoad</key>"));
                 assert!(contents.contains("<string>run</string>"));
+                assert!(contents.contains("<string>--tray</string>"));
             }
         }
     }

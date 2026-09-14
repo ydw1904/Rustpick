@@ -95,11 +95,11 @@ async fn main() -> Result<()> {
         Cmd::Autostart { state } => match state.as_deref() {
             None => println!("Autostart is {}", if rustpick::autostart::enabled() { "on" } else { "off" }),
             Some("on") => {
-                rustpick::autostart::set(true)?;
+                rustpick::autostart::set(true, &["run"])?;
                 println!("Autostart enabled: {} runs at login.", std::env::current_exe()?.display());
             }
             Some("off") => {
-                rustpick::autostart::set(false)?;
+                rustpick::autostart::set(false, &[])?;
                 println!("Autostart disabled.");
             }
             Some(other) => bail!("unknown autostart state '{other}' (use on or off)"),
@@ -235,7 +235,7 @@ impl Printer {
                 }
             }
             Event::Progress(None) => self.last_progress = None,
-            Event::Watching(_) | Event::Websocket { .. } => {}
+            Event::Watching(_) | Event::Websocket { .. } | Event::DropClaimed(_) => {}
             Event::Exited => self.line("Exited."),
         }
     }

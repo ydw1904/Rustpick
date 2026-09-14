@@ -803,7 +803,9 @@ impl Miner {
                 c.claimed_drops(),
                 c.total_drops()
             );
-            self.print(t!["status", "claimed_drop"; "drop" => drop_text]);
+            let msg = t!["status", "claimed_drop"; "drop" => drop_text];
+            self.print(msg.clone());
+            let _ = self.events.send(Event::DropClaimed(msg));
             self.emit_inventory();
         } else {
             tracing::error!("Drop claim has potentially failed! Drop ID: {drop_id}");

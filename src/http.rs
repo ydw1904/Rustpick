@@ -49,6 +49,8 @@ pub struct Http {
     client: Client,
     pub info: &'static ClientInfo,
     pub user_agent: &'static str,
+    /// Proxy URL from settings, reused by the websocket pool.
+    pub proxy: String,
     device_id: String,
     session_id: String,
     token: Mutex<Option<String>>,
@@ -83,6 +85,7 @@ impl Http {
             client: builder.build()?,
             info,
             user_agent,
+            proxy: settings.proxy.clone(),
             device_id: auth.device_id,
             session_id: nonce(CHARS_HEX_LOWER, 16),
             token: Mutex::new(auth.access_token),

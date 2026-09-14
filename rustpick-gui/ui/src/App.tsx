@@ -116,6 +116,8 @@ interface Settings {
   available_drops_check: boolean
   dark_mode: boolean
   language: string
+  tray_notifications: boolean
+  autostart_tray: boolean
 }
 
 type MinerEvent =
@@ -123,6 +125,7 @@ type MinerEvent =
   | { kind: "Status"; data: string }
   | { kind: "LoginCode"; data: { url: string; code: string } }
   | { kind: "LoggedIn"; data: { user_id: number } }
+  | { kind: "DropClaimed"; data: string }
   | { kind: "Websocket"; data: { idx: number; status: string; topics: number } }
   | { kind: "Channels"; data: Channel[] }
   | { kind: "Watching"; data: number | null }
@@ -680,6 +683,18 @@ export default function App() {
                   checked={!!autostart}
                   onCheckedChange={(checked) => toggleAutostart(!!checked)}
                   disabled={autostart == null}
+                />
+                <label htmlFor="s-autostart-tray">Autostart in tray</label>
+                <Checkbox
+                  id="s-autostart-tray"
+                  checked={!!settings?.autostart_tray}
+                  onCheckedChange={(checked) => update({ autostart_tray: !!checked })}
+                />
+                <label htmlFor="s-notify">Drop notifications</label>
+                <Checkbox
+                  id="s-notify"
+                  checked={!!settings?.tray_notifications}
+                  onCheckedChange={(checked) => update({ tray_notifications: !!checked })}
                 />
                 <label>Language</label>
                 <Select

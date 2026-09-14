@@ -82,6 +82,7 @@ rustpick show                    # print settings.json
 rustpick logout                  # forget the saved token
 rustpick import ~/TwitchDropsMiner   # adopt a TDM install's settings AND cookies.jar login
 rustpick-gui                     # Tauri desktop UI: Main / Inventory / Settings / Help tabs
+rustpick-gui --tray              # start hidden in the tray (what "Autostart in tray" uses)
 ```
 
 Files (`settings.json`, `auth.json`, `log.txt`, `lock.file`) live in the current directory, or in

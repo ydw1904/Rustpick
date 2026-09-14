@@ -11,6 +11,8 @@ const settings = {
   available_drops_check: true,
   dark_mode: new URLSearchParams(location.search).get("dark") === "1",
   language: "English",
+  tray_notifications: true,
+  autostart_tray: false,
 }
 
 const channels = [

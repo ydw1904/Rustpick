@@ -39,7 +39,7 @@ impl PriorityMode {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Settings {
-    /// HTTP(S) proxy URL; empty for none. Not applied to the websocket.
+    /// HTTP proxy URL; empty for none. Also tunnels the PubSub websocket (CONNECT).
     pub proxy: String,
     pub priority: Vec<String>,
     pub exclude: BTreeSet<String>,
@@ -51,6 +51,10 @@ pub struct Settings {
     pub dark_mode: bool,
     /// UI language for the core's messages; one of `translate::LANGUAGES`.
     pub language: String,
+    /// GUI: desktop notification when a drop is claimed.
+    pub tray_notifications: bool,
+    /// GUI: the autostart entry launches minimized to the tray.
+    pub autostart_tray: bool,
 }
 
 impl Default for Settings {
@@ -65,6 +69,8 @@ impl Default for Settings {
             available_drops_check: false,
             dark_mode: false,
             language: "English".to_owned(),
+            tray_notifications: true,
+            autostart_tray: false,
         }
     }
 }
@@ -104,7 +110,6 @@ impl Settings {
     /// Build settings from a TwitchDropsMiner install. `path` is either its
     /// `settings.json` or the folder containing it. TDM wraps `set`/`Enum`/`URL`
     /// values as `{"__type":..,"data":..}`; [`tdm_data`] unwraps those. Fields TDM
-    /// has but Rustpick lacks (autostart_tray, tray_notifications) are ignored.
     /// Fields missing from the file keep our defaults.
     pub fn import_tdm(path: &Path) -> Result<Self> {
         let file = if path.is_dir() { path.join("settings.json") } else { path.to_path_buf() };
@@ -141,6 +146,12 @@ impl Settings {
         }
         if let Some(b) = tdm_data(&v, "available_drops_check").and_then(|x| x.as_bool()) {
             s.available_drops_check = b;
+        }
+        if let Some(b) = tdm_data(&v, "tray_notifications").and_then(|x| x.as_bool()) {
+            s.tray_notifications = b;
+        }
+        if let Some(b) = tdm_data(&v, "autostart_tray").and_then(|x| x.as_bool()) {
+            s.autostart_tray = b;
         }
         if let Some(lang) = tdm_data(&v, "language").and_then(|x| x.as_str()) {
             s.language = crate::translate::LANGUAGES
@@ -193,6 +204,8 @@ mod tests {
         assert_eq!(s.connection_quality, 6); // clamped from 9
         assert!(s.dark_mode);
         assert!(s.enable_badges_emotes);
+        assert!(s.autostart_tray);
+        assert!(s.tray_notifications); // absent from the file, keeps the default
         std::fs::remove_dir_all(&dir).ok();
     }
 

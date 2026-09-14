@@ -28,6 +28,10 @@ fn get_settings(state: tauri::State<AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(state: tauri::State<AppState>, settings: Settings) {
+    // keep an existing autostart entry in step with the "start in tray" choice
+    if rustpick::autostart::enabled() {
+        let _ = rustpick::autostart::set(true, autostart_args(&settings));
+    }
     *state.settings.lock().unwrap() = settings.clone();
     state.handle.send(Command::Settings(settings));
 }
@@ -63,8 +67,13 @@ fn get_autostart() -> bool {
 
 /// Create or remove the login-time autostart entry.
 #[tauri::command]
-fn set_autostart(enabled: bool) -> Result<(), String> {
-    rustpick::autostart::set(enabled).map_err(|e| e.to_string())
+fn set_autostart(state: tauri::State<AppState>, enabled: bool) -> Result<(), String> {
+    let settings = state.settings.lock().unwrap().clone();
+    rustpick::autostart::set(enabled, autostart_args(&settings)).map_err(|e| e.to_string())
+}
+
+fn autostart_args(settings: &Settings) -> &'static [&'static str] {
+    if settings.autostart_tray { &["--tray"] } else { &[] }
 }
 
 /// Names of the bundled UI languages.
@@ -114,6 +123,13 @@ fn frontend_ready(app: AppHandle) {
         loop {
             match rx.recv().await {
                 Ok(ev) => {
+                    if let Event::DropClaimed(msg) = &ev {
+                        if app.state::<AppState>().settings.lock().unwrap().tray_notifications {
+                            use tauri_plugin_notification::NotificationExt;
+                            let title = rustpick::t!["gui", "tray", "notification_title"];
+                            let _ = app.notification().builder().title(title).body(msg).show();
+                        }
+                    }
                     let exited = matches!(ev, Event::Exited);
                     let _ = app.emit("miner-event", ev);
                     if exited {
@@ -161,6 +177,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             handle,
             settings: Mutex::new(settings),
@@ -201,6 +218,10 @@ fn main() {
                     }
                 })
                 .build(app)?;
+            // the window starts hidden (tauri.conf.json); `--tray` keeps it that way
+            if !std::env::args().any(|a| a == "--tray") {
+                show_main(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -6,17 +6,19 @@ use crate::http::Http;
 use crate::miner::Msg;
 use crate::util::{Backoff, CHARS_ASCII, nonce};
 use anyhow::{Result, bail};
+use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, sleep_until, timeout};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, client_async_tls, connect_async};
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -120,6 +122,48 @@ impl WsPool {
     }
 }
 
+/// Open the PubSub socket, through the HTTP proxy when one is configured.
+async fn connect(proxy: &str) -> Result<Socket> {
+    if proxy.is_empty() {
+        return Ok(connect_async(WS_URL).await?.0);
+    }
+    let target = reqwest::Url::parse(WS_URL)?;
+    let host = target.host_str().unwrap_or_default();
+    let tcp = tunnel(proxy, host, target.port_or_known_default().unwrap_or(443)).await?;
+    Ok(client_async_tls(WS_URL, tcp).await?.0)
+}
+
+/// HTTP CONNECT to `host:port` via `proxy` (http:// only, like upstream's aiohttp).
+async fn tunnel(proxy: &str, host: &str, port: u16) -> Result<TcpStream> {
+    let url = reqwest::Url::parse(proxy)?;
+    if url.scheme() != "http" {
+        bail!("websocket proxy must be http://, not {}://", url.scheme());
+    }
+    let mut tcp =
+        TcpStream::connect((url.host_str().unwrap_or_default(), url.port_or_known_default().unwrap_or(80))).await?;
+    let mut req = format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n");
+    if !url.username().is_empty() {
+        let decode = |s: &str| percent_encoding::percent_decode_str(s).decode_utf8_lossy().into_owned();
+        let creds = format!("{}:{}", decode(url.username()), decode(url.password().unwrap_or("")));
+        req += &format!("Proxy-Authorization: Basic {}\r\n", base64::engine::general_purpose::STANDARD.encode(creds));
+    }
+    req += "\r\n";
+    tcp.write_all(req.as_bytes()).await?;
+    // byte at a time so nothing past the header (the TLS handshake) gets swallowed
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        if head.len() > 8192 {
+            bail!("proxy CONNECT response too long");
+        }
+        head.push(tcp.read_u8().await?);
+    }
+    let head = String::from_utf8_lossy(&head);
+    if head.split_whitespace().nth(1) != Some("200") {
+        bail!("proxy CONNECT refused: {}", head.lines().next().unwrap_or_default());
+    }
+    Ok(tcp)
+}
+
 async fn send_json(ws: &mut Socket, mut msg: Value) -> Result<()> {
     if msg["type"] != "PING" {
         msg["nonce"] = Value::String(nonce(CHARS_ASCII, 30));
@@ -150,8 +194,8 @@ async fn run_ws(
     let mut backoff = Backoff::new(180.0);
     status("Connecting", 0);
     loop {
-        let mut ws = match connect_async(WS_URL).await {
-            Ok((ws, _)) => ws,
+        let mut ws = match connect(&http.proxy).await {
+            Ok(ws) => ws,
             Err(e) => {
                 let delay = backoff.delay();
                 tracing::info!("Websocket[{idx}] connection problem: {e} (sleep: {}s)", delay.as_secs());
@@ -244,5 +288,42 @@ async fn run_ws(
         }
         tracing::warn!("Websocket[{idx}] reconnecting ({reason})...");
         status("Reconnecting", wanted.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    async fn fake_proxy(reply: &'static str) -> (String, JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0; 1024];
+            let n = sock.read(&mut buf).await.unwrap();
+            sock.write_all(reply.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        });
+        (format!("http://us%40er:p%3Ass@{addr}"), task)
+    }
+
+    #[tokio::test]
+    async fn tunnel_sends_connect_with_decoded_auth() {
+        let (proxy, task) = fake_proxy("HTTP/1.1 200 Connection established\r\n\r\n").await;
+        tunnel(&proxy, "pubsub-edge.twitch.tv", 443).await.unwrap();
+        let req = task.await.unwrap();
+        assert!(req.starts_with("CONNECT pubsub-edge.twitch.tv:443 HTTP/1.1\r\n"));
+        let auth = base64::engine::general_purpose::STANDARD.encode("us@er:p:ss");
+        assert!(req.contains(&format!("Proxy-Authorization: Basic {auth}\r\n")));
+    }
+
+    #[tokio::test]
+    async fn tunnel_rejects_non_200() {
+        let (proxy, _task) = fake_proxy("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n").await;
+        let err = tunnel(&proxy, "pubsub-edge.twitch.tv", 443).await.unwrap_err();
+        assert!(err.to_string().contains("407"));
+        assert!(tunnel("socks5://127.0.0.1:1", "x", 443).await.is_err());
     }
 }
