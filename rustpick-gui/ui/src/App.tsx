@@ -684,32 +684,36 @@ export default function App() {
       {/* ===== INVENTORY ===== */}
       <TabsContent value="inventory" className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl bg-card px-3 py-2 ring-1 ring-foreground/10">
-          <span className="text-sm text-muted-foreground">Show</span>
-          {FILTERS.map(([key, label]) => (
-            <label key={key} className="flex cursor-pointer items-center gap-1.5 text-sm">
-              <Checkbox
-                checked={filters[key]}
-                onCheckedChange={(checked) => setFilters((f) => ({ ...f, [key]: !!checked }))}
-              />
-              {label}
-            </label>
-          ))}
-          <Input
-            className="h-8 w-44"
-            placeholder="Search game or campaign"
-            value={inv.search}
-            onChange={(e) => setInv((v) => ({ ...v, search: e.target.value }))}
-          />
-          <Select items={Object.fromEntries(SORTS)} value={inv.sort} onValueChange={(v) => setInv((x) => ({ ...x, sort: v as Sort }))}>
-            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {SORTS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Button size="sm" variant="outline" className="ml-auto" onClick={() => invoke("reload")}>
-            <HugeiconsIcon icon={RefreshIcon} size={14} strokeWidth={2} data-icon="inline-start" />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="text-sm text-muted-foreground">Show</span>
+            {FILTERS.map(([key, label]) => (
+              <label key={key} className="flex cursor-pointer items-center gap-1.5 text-sm">
+                <Checkbox
+                  checked={filters[key]}
+                  onCheckedChange={(checked) => setFilters((f) => ({ ...f, [key]: !!checked }))}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Input
+              className="h-8 w-44"
+              placeholder="Search game or campaign"
+              value={inv.search}
+              onChange={(e) => setInv((v) => ({ ...v, search: e.target.value }))}
+            />
+            <Select items={Object.fromEntries(SORTS)} value={inv.sort} onValueChange={(v) => setInv((x) => ({ ...x, sort: v as Sort }))}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SORTS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" onClick={() => invoke("reload")}>
+              <HugeiconsIcon icon={RefreshIcon} size={14} strokeWidth={2} data-icon="inline-start" />
+              Refresh
+            </Button>
+          </div>
         </div>
         {visibleCampaigns.map((c) => {
           const [label, cls] = CAMP_STATUS[c.status === "Active" ? `Active_${c.eligible}` : c.status] ?? ["", DIM]
