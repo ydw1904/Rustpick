@@ -167,7 +167,7 @@ The post-login flow has automated tests and compiles, but has not yet been fully
 
 ## Data and security
 
-By default, `settings.json`, `auth.json`, `claims.jsonl`, `status.json`, `log.txt`, and `lock.file` are stored in the directory where Rustpick runs. Set `RUSTPICK_DIR` to use a different data directory.
+By default, `settings.json`, `auth.json`, `claims.jsonl`, `status.json`, `log.txt`, and `lock.file` are stored in the directory where Rustpick runs. The desktop app opened from Finder uses `~/Library/Application Support/rustpick` instead. Set `RUSTPICK_DIR` to use a different data directory.
 
 `auth.json` contains your Twitch access token. Treat it like a password and do not share or commit it. Rustpick allows only one miner per data directory at a time.
 

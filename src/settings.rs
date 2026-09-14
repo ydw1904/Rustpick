@@ -155,7 +155,7 @@ pub fn profile() -> Option<&'static str> {
 }
 
 /// The platform's per-user config directory.
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     let env = |k| std::env::var_os(k).map(PathBuf::from);
     let home = || env("HOME").unwrap_or_default();
     if cfg!(windows) {

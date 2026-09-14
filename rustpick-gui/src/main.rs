@@ -633,6 +633,14 @@ fn main() {
         eprintln!("--profile: {e:#}");
         std::process::exit(2);
     }
+    // Launched as an app (Finder, Dock) the working directory is the read-only "/",
+    // so keep data in the per-user config dir instead of "."
+    if std::env::var_os("RUSTPICK_DIR").is_none() && std::env::current_dir().is_ok_and(|d| d.parent().is_none()) {
+        let dir = rustpick::settings::config_dir().join("rustpick");
+        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::env::set_current_dir(&dir)) {
+            eprintln!("data dir {}: {e}", dir.display());
+        }
+    }
     let title = match &profile {
         Some(p) => format!("Rustpick ({p})"),
         None => "Rustpick".to_owned(),
