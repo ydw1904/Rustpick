@@ -8,6 +8,7 @@
 use rustpick::events::Event;
 use rustpick::{Command, Miner, MinerHandle, Settings};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
@@ -19,7 +20,12 @@ struct AppState {
     /// The core, taken and started once the webview signals it is listening.
     miner: Mutex<Option<Miner>>,
     events: broadcast::Sender<Event>,
+    /// Mirrors the last `Event::Paused`, for the tray toggle.
+    paused: AtomicBool,
 }
+
+/// The tray's Pause/Resume item, relabeled on `Event::Paused`.
+struct PauseItem(MenuItem<tauri::Wry>);
 
 #[tauri::command]
 fn get_settings(state: tauri::State<AppState>) -> Settings {
@@ -93,6 +99,11 @@ fn select(state: tauri::State<AppState>, id: Option<u64>) {
 }
 
 #[tauri::command]
+fn set_paused(state: tauri::State<AppState>, paused: bool) {
+    state.handle.send(Command::Pause(paused));
+}
+
+#[tauri::command]
 fn shutdown(state: tauri::State<AppState>) {
     state.handle.send(Command::Exit);
 }
@@ -123,11 +134,18 @@ fn frontend_ready(app: AppHandle) {
         loop {
             match rx.recv().await {
                 Ok(ev) => {
-                    if let Event::DropClaimed(msg) = &ev {
+                    if let Event::DropClaimed(claim) = &ev {
                         if app.state::<AppState>().settings.lock().unwrap().tray_notifications {
                             use tauri_plugin_notification::NotificationExt;
                             let title = rustpick::t!["gui", "tray", "notification_title"];
-                            let _ = app.notification().builder().title(title).body(msg).show();
+                            let body = format!("{} {}", claim.game, claim.rewards);
+                            let _ = app.notification().builder().title(title).body(body).show();
+                        }
+                    }
+                    if let Event::Paused(p) = ev {
+                        app.state::<AppState>().paused.store(p, Ordering::Relaxed);
+                        if let Some(item) = app.try_state::<PauseItem>() {
+                            let _ = item.0.set_text(if p { "Resume" } else { "Pause" });
                         }
                     }
                     let exited = matches!(ev, Event::Exited);
@@ -183,6 +201,7 @@ fn main() {
             settings: Mutex::new(settings),
             miner: Mutex::new(Some(miner)),
             events,
+            paused: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -193,6 +212,7 @@ fn main() {
             list_languages,
             reload,
             select,
+            set_paused,
             shutdown,
             open_url,
             copy_text,
@@ -201,7 +221,9 @@ fn main() {
         .setup(|app| {
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let pause = MenuItem::with_id(app, "pause", "Pause", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &pause, &quit])?;
+            app.manage(PauseItem(pause));
             TrayIconBuilder::new()
                 .icon(tray_icon())
                 .tooltip("Rustpick")
@@ -210,6 +232,10 @@ fn main() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => app.state::<AppState>().handle.send(Command::Exit),
                     "show" => show_main(app),
+                    "pause" => {
+                        let state = app.state::<AppState>();
+                        state.handle.send(Command::Pause(!state.paused.load(Ordering::Relaxed)));
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

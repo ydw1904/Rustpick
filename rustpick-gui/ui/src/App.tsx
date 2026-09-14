@@ -118,6 +118,7 @@ interface Settings {
   language: string
   tray_notifications: boolean
   autostart_tray: boolean
+  notify_url: string
 }
 
 type MinerEvent =
@@ -125,7 +126,10 @@ type MinerEvent =
   | { kind: "Status"; data: string }
   | { kind: "LoginCode"; data: { url: string; code: string } }
   | { kind: "LoggedIn"; data: { user_id: number } }
-  | { kind: "DropClaimed"; data: string }
+  | { kind: "LoginRequired" }
+  | { kind: "DropClaimed"; data: { ts: string; game: string; campaign: string; drop: string; rewards: string; benefit_ids: string[] } }
+  | { kind: "AllDone" }
+  | { kind: "Paused"; data: boolean }
   | { kind: "Websocket"; data: { idx: number; status: string; topics: number } }
   | { kind: "Channels"; data: Channel[] }
   | { kind: "Watching"; data: number | null }
@@ -257,6 +261,7 @@ export default function App() {
   const [tdmMsg, setTdmMsg] = useState("")
   const [autostart, setAutostart] = useState<boolean | null>(null)
   const [languages, setLanguages] = useState<string[]>([])
+  const [paused, setPaused] = useState(false)
   const [filters, setFilters] = useState<Filters>({
     notlinked: true, upcoming: true, expired: true, excluded: false, finished: true,
   })
@@ -287,6 +292,7 @@ export default function App() {
       case "Watching": setWatching(ev.data); break
       case "Inventory": setInventory(ev.data); break
       case "Progress": setProgress(ev.data); setProgressAt(Date.now()); break
+      case "Paused": setPaused(ev.data); break
       case "Exited": setStatus("Exited"); break
     }
   }
@@ -450,7 +456,15 @@ export default function App() {
             </Card>
 
             <Card size="sm">
-              <CardHeader><CardTitle>Mining progress</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle>Mining progress</CardTitle>
+                <CardAction>
+                  <Button size="sm" variant="outline" onClick={() => invoke("set_paused", { paused: !paused })}>
+                    {paused ? "Resume" : "Pause"}
+                  </Button>
+                </CardAction>
+                {paused && <CardDescription>Paused: no watch time is being sent.</CardDescription>}
+              </CardHeader>
               <CardContent>
                 {progress ? (
                   <div className="flex flex-col gap-4">
@@ -723,6 +737,13 @@ export default function App() {
                   placeholder="http://host:port (needs restart)"
                   value={settings?.proxy ?? ""}
                   onChange={(e) => update({ proxy: e.target.value })}
+                />
+                <label htmlFor="s-notify-url">Webhook URL</label>
+                <Input
+                  id="s-notify-url"
+                  placeholder="Discord/Slack/Gotify webhook (claims, login, done)"
+                  value={settings?.notify_url ?? ""}
+                  onChange={(e) => update({ notify_url: e.target.value })}
                 />
                 <label htmlFor="s-quality">Connection quality</label>
                 <div className="flex items-center gap-3">

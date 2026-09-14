@@ -55,6 +55,8 @@ pub struct Settings {
     pub tray_notifications: bool,
     /// GUI: the autostart entry launches minimized to the tray.
     pub autostart_tray: bool,
+    /// Webhook URL that gets a JSON POST on claims, login needed and all done; empty for off.
+    pub notify_url: String,
 }
 
 impl Default for Settings {
@@ -71,6 +73,7 @@ impl Default for Settings {
             language: "English".to_owned(),
             tray_notifications: true,
             autostart_tray: false,
+            notify_url: String::new(),
         }
     }
 }

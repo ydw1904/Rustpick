@@ -2,7 +2,7 @@
 
 use crate::settings::Settings;
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -13,6 +13,8 @@ pub enum Command {
     Select(Option<u64>),
     /// Replace and persist settings. Takes effect on the next reload.
     Settings(Settings),
+    /// Stop (true) or resume (false) sending watch events. Websockets and reloads keep running.
+    Pause(bool),
 }
 
 /// Serialized to the webview as `{ "kind": <variant>, "data": <payload> }`.
@@ -23,11 +25,15 @@ pub enum Event {
     Print(String),
     /// Short status bar text.
     Status(String),
+    /// A saved login was rejected by Twitch; a `LoginCode` follows.
+    LoginRequired,
     /// Device-code login: the user must open `url` and enter `code`.
     LoginCode { url: String, code: String },
     LoggedIn { user_id: u64 },
-    /// A drop was claimed; the payload is the translated "Claimed drop: ..." line.
-    DropClaimed(String),
+    DropClaimed(Claim),
+    /// There were campaigns to mine and now there are none left.
+    AllDone,
+    Paused(bool),
     Websocket { idx: usize, status: String, topics: usize },
     Channels(Vec<ChannelView>),
     Watching(Option<u64>),
@@ -106,4 +112,15 @@ pub struct ProgressView {
     pub campaign_remaining_minutes: u32,
     /// True when a fresh minute of progress was just recorded, so a 60s countdown makes sense.
     pub countdown: bool,
+}
+
+/// One claimed drop; also a line of `claims.jsonl`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Claim {
+    pub ts: DateTime<Utc>,
+    pub game: String,
+    pub campaign: String,
+    pub drop: String,
+    pub rewards: String,
+    pub benefit_ids: Vec<String>,
 }

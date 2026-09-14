@@ -12,6 +12,7 @@ const settings = {
   dark_mode: new URLSearchParams(location.search).get("dark") === "1",
   language: "English",
   tray_notifications: true,
+  notify_url: "",
   autostart_tray: false,
 }
 
@@ -79,6 +80,7 @@ export function install() {
         if (cmd === "frontend_ready") setTimeout(boot, 50)
         if (cmd === "select") log(`Switching to channel ${args?.id ?? "(auto)"}`)
         if (cmd === "reload") log("Reloading…")
+        if (cmd === "set_paused") emit("Paused", args?.paused)
         if (cmd === "open_url" || cmd === "copy_text") log(`${cmd}: ${JSON.stringify(args)}`)
         return null
       },

@@ -280,12 +280,14 @@ impl Http {
                 401 => {
                     tracing::info!("Stored token is invalid");
                     *self.token.lock().unwrap() = None;
+                    let _ = self.events.send(Event::LoginRequired);
                 }
                 200 => {
                     let v: Value = resp.json().await?;
                     if v.get("client_id").and_then(Value::as_str) != Some(self.info.id) {
                         tracing::info!("Token client ID mismatch, logging in again");
                         *self.token.lock().unwrap() = None;
+                        let _ = self.events.send(Event::LoginRequired);
                         continue;
                     }
                     let uid: u64 = v

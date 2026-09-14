@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
-use rustpick::events::{CampaignStatus, ChannelStatus};
+use rustpick::events::{CampaignStatus, ChannelStatus, Claim};
 use rustpick::settings::{PriorityMode, data_dir};
 use rustpick::{Command, Event, Miner, Settings};
 use std::collections::BTreeSet;
@@ -27,6 +27,9 @@ enum Cmd {
         /// Fetch the inventory once, write it to dump.dat and exit
         #[arg(long)]
         dump: bool,
+        /// If a login is needed, print the activation URL and code, then exit with code 4
+        #[arg(long)]
+        no_interactive_login: bool,
     },
     /// Print the settings file path and contents
     Show,
@@ -38,6 +41,10 @@ enum Cmd {
     Mode { mode: String },
     /// Toggle a flag: badges-emotes | drops-check | dark-mode
     Set { key: String, value: bool },
+    /// Set the webhook URL for notifications (claims, login needed, all done); "" turns it off
+    NotifyUrl { url: String },
+    /// Print the claimed drops history (claims.jsonl)
+    Claims,
     /// Set the UI language (run `rustpick language` for the list)
     Language { name: Option<String> },
     /// Forget the saved Twitch login
@@ -54,13 +61,15 @@ async fn main() -> Result<()> {
     rustpick::init_logging(cli.verbose, cli.log)?;
     let mut settings = Settings::load()?;
     rustpick::translate::init(&settings.language);
-    match cli.cmd.unwrap_or(Cmd::Run { dump: false }) {
-        Cmd::Run { dump } => return run(settings, dump).await,
+    match cli.cmd.unwrap_or(Cmd::Run { dump: false, no_interactive_login: false }) {
+        Cmd::Run { dump, no_interactive_login } => return run(settings, dump, no_interactive_login).await,
         Cmd::Show => {
             println!("{}", Settings::path().display());
             println!("{}", serde_json::to_string_pretty(&settings)?);
             return Ok(());
         }
+        Cmd::NotifyUrl { url } => settings.notify_url = url,
+        Cmd::Claims => return print_claims(),
         Cmd::Priority { games } => settings.priority = games,
         Cmd::Exclude { games } => settings.exclude = games.into_iter().collect(),
         Cmd::Mode { mode } => {
@@ -138,7 +147,35 @@ fn import_tdm_login(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-async fn run(settings: Settings, dump: bool) -> Result<()> {
+fn print_claims() -> Result<()> {
+    let path = data_dir().join("claims.jsonl");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("No drops claimed yet.");
+            return Ok(());
+        }
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str::<Claim>(line) {
+            Ok(c) => println!(
+                "{} | {} | {} | {}",
+                c.ts.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M"),
+                c.game,
+                c.campaign,
+                c.rewards
+            ),
+            Err(e) => eprintln!("skipping a malformed line ({e}): {line}"),
+        }
+    }
+    Ok(())
+}
+
+/// Exit code for "a login is needed but --no-interactive-login was given".
+const EXIT_LOGIN_REQUIRED: i32 = 4;
+
+async fn run(settings: Settings, dump: bool, no_interactive_login: bool) -> Result<()> {
     let lock = rustpick::lock::SingleInstance::acquire(&data_dir().join("lock.file"));
     let lock = match lock {
         Ok(l) => l,
@@ -165,17 +202,28 @@ async fn run(settings: Settings, dump: bool) -> Result<()> {
         std::process::exit(130);
     });
     let mut printer = Printer::default();
+    let mut login_needed = false;
     let result = loop {
         tokio::select! {
             r = &mut task => break r?,
             ev = events.recv() => match ev {
-                Ok(e) => printer.print(e),
+                Ok(e) => {
+                    if no_interactive_login && matches!(e, Event::LoginCode { .. }) && !login_needed {
+                        login_needed = true;
+                        handle.send(Command::Exit);
+                    }
+                    printer.print(e)
+                }
                 Err(broadcast::error::RecvError::Lagged(n)) => eprintln!("(dropped {n} events)"),
                 Err(broadcast::error::RecvError::Closed) => break task.await?,
             }
         }
     };
     drop(lock);
+    if login_needed {
+        eprintln!("Login required and --no-interactive-login is set. Exiting with code {EXIT_LOGIN_REQUIRED}.");
+        std::process::exit(EXIT_LOGIN_REQUIRED);
+    }
     result
 }
 
@@ -194,6 +242,9 @@ impl Printer {
         match e {
             Event::Print(s) => self.line(s),
             Event::Status(s) => tracing::info!("Status: {s}"),
+            Event::LoginRequired => self.line("The saved Twitch login has expired."),
+            Event::AllDone => self.line("All campaigns are done."),
+            Event::Paused(p) => self.line(if p { "Paused." } else { "Resumed." }),
             Event::LoginCode { url, code } => self.line(format!(">>> Open {url} and enter the code: {code}")),
             Event::LoggedIn { user_id } => self.line(format!("Logged in (user ID {user_id})")),
             Event::Inventory(campaigns) => {
