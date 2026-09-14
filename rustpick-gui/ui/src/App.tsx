@@ -116,7 +116,7 @@ interface Settings {
   connection_quality: number
   enable_badges_emotes: boolean
   available_drops_check: boolean
-  dark_mode: boolean
+  theme: "system" | "light" | "dark"
   language: string
   tray_notifications: boolean
   autostart_tray: boolean
@@ -381,8 +381,15 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", !!settings?.dark_mode)
-  }, [settings?.dark_mode])
+    const theme = settings?.theme ?? "system"
+    const mq = window.matchMedia("(prefers-color-scheme: dark)")
+    const apply = () =>
+      document.documentElement.classList.toggle("dark", theme === "dark" || (theme === "system" && mq.matches))
+    apply()
+    if (theme !== "system") return
+    mq.addEventListener("change", apply)
+    return () => mq.removeEventListener("change", apply)
+  }, [settings?.theme])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -783,12 +790,18 @@ export default function App() {
             <Card size="sm">
               <CardHeader><CardTitle>General</CardTitle></CardHeader>
               <CardContent className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-3 text-sm">
-                <label htmlFor="s-dark">Dark mode</label>
-                <Checkbox
-                  id="s-dark"
-                  checked={!!settings?.dark_mode}
-                  onCheckedChange={(checked) => update({ dark_mode: !!checked })}
-                />
+                <label htmlFor="s-theme">Theme</label>
+                <Select
+                  value={settings?.theme ?? "system"}
+                  onValueChange={(v) => update({ theme: v as Settings["theme"] })}
+                >
+                  <SelectTrigger id="s-theme" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="system">System</SelectItem>
+                    <SelectItem value="light">Light</SelectItem>
+                    <SelectItem value="dark">Dark</SelectItem>
+                  </SelectContent>
+                </Select>
                 <label htmlFor="s-autostart">Autostart</label>
                 <Checkbox
                   id="s-autostart"

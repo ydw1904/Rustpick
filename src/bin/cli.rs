@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use rustpick::events::{CampaignStatus, ChannelStatus, Claim};
-use rustpick::settings::{PriorityMode, data_dir};
+use rustpick::settings::{PriorityMode, Theme, data_dir};
 use rustpick::{Command, Event, Miner, Settings};
 use std::collections::BTreeSet;
 use tokio::sync::broadcast;
@@ -123,7 +123,10 @@ async fn main() -> Result<()> {
         Cmd::Set { key, value } => match key.as_str() {
             "badges-emotes" => settings.enable_badges_emotes = value,
             "drops-check" => settings.available_drops_check = value,
-            "dark-mode" => settings.dark_mode = value,
+            "dark-mode" => {
+                // bool can't express "system"; off keeps the old light behavior.
+                settings.theme = if value { Theme::Dark } else { Theme::Light };
+            }
             other => bail!("unknown key '{other}'"),
         },
         Cmd::Language { name } => match name {

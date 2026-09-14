@@ -1,6 +1,7 @@
 // Browser-only stand-in for the Tauri bridge so `vite dev` renders with data.
 // Installed by tauri.ts only when window.__TAURI__ is missing.
 
+const themeParam = new URLSearchParams(location.search).get("theme")
 const settings = {
   proxy: "",
   priority: ["Rust", "Warframe", "Path of Exile 2"],
@@ -9,7 +10,7 @@ const settings = {
   connection_quality: 3,
   enable_badges_emotes: false,
   available_drops_check: true,
-  dark_mode: new URLSearchParams(location.search).get("dark") === "1",
+  theme: themeParam === "light" || themeParam === "dark" ? themeParam : "system",
   language: "English",
   tray_notifications: true,
   notify_url: "",

@@ -36,6 +36,51 @@ impl PriorityMode {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    /// Follow the OS appearance.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Theme {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.replace('-', "_").as_str() {
+            "system" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+}
+
+/// Accept the current `"system"|"light"|"dark"` string and the legacy bool
+/// (`true` = dark, `false` = system) so old settings.json files keep loading.
+fn de_theme<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Theme, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Name(Theme),
+        Legacy(bool),
+    }
+    match Raw::deserialize(d)? {
+        Raw::Name(t) => Ok(t),
+        Raw::Legacy(true) => Ok(Theme::Dark),
+        Raw::Legacy(false) => Ok(Theme::System),
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Settings {
@@ -48,7 +93,9 @@ pub struct Settings {
     pub connection_quality: u32,
     pub enable_badges_emotes: bool,
     pub available_drops_check: bool,
-    pub dark_mode: bool,
+    /// GUI appearance; system follows the OS.
+    #[serde(default, alias = "dark_mode", deserialize_with = "de_theme")]
+    pub theme: Theme,
     /// UI language for the core's messages; one of `translate::LANGUAGES`.
     pub language: String,
     /// GUI: desktop notification when a drop is claimed.
@@ -73,7 +120,7 @@ impl Default for Settings {
             connection_quality: 1,
             enable_badges_emotes: false,
             available_drops_check: false,
-            dark_mode: false,
+            theme: Theme::System,
             language: "English".to_owned(),
             tray_notifications: true,
             autostart_tray: false,
@@ -233,7 +280,8 @@ impl Settings {
             };
         }
         if let Some(b) = tdm_data(&v, "dark_mode").and_then(|x| x.as_bool()) {
-            s.dark_mode = b;
+            // TDM's toggle was light/dark only; false means light.
+            s.theme = if b { Theme::Dark } else { Theme::Light };
         }
         if let Some(b) = tdm_data(&v, "enable_badges_emotes").and_then(|x| x.as_bool()) {
             s.enable_badges_emotes = b;
@@ -296,10 +344,23 @@ mod tests {
         assert!(s.exclude.contains("Game C"));
         assert_eq!(s.priority_mode, PriorityMode::LowAvblFirst);
         assert_eq!(s.connection_quality, 6); // clamped from 9
-        assert!(s.dark_mode);
+        assert_eq!(s.theme, Theme::Dark);
         assert!(s.enable_badges_emotes);
         assert!(s.autostart_tray);
         assert!(s.tray_notifications); // absent from the file, keeps the default
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn legacy_dark_mode_bool_migrates() {
+        let dir = std::env::temp_dir().join(format!("rustpick-theme-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // ponytail: unsafe env mutation; no other test reads RUSTPICK_DIR, keep it that way
+        unsafe { std::env::set_var("RUSTPICK_DIR", &dir) };
+        std::fs::write(dir.join("settings.json"), r#"{"dark_mode": true}"#).unwrap();
+        let s = Settings::load().unwrap();
+        assert_eq!(s.theme, Theme::Dark);
+        unsafe { std::env::remove_var("RUSTPICK_DIR") };
         std::fs::remove_dir_all(&dir).ok();
     }
 
