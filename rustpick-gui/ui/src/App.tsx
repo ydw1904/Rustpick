@@ -16,7 +16,7 @@ import {
   RefreshIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons"
-import logo from "../../icons/128x128.png"
+import logo from "./assets/rustpick_logo.png"
 import { invoke } from "@/lib/tauri"
 import { countdownParts } from "@/lib/countdown"
 import { cn } from "@/lib/utils"
@@ -481,7 +481,7 @@ export default function App() {
     <Tabs value={tab} onValueChange={(v) => setTab(v as string)} className="app-shell h-screen gap-0 bg-background">
       <header className="app-header flex h-14 shrink-0 items-center gap-4 border-b px-4">
         <div className="flex min-w-0 items-center gap-3">
-          <img src={logo} alt="Rustpick" className="size-8 shrink-0" />
+          <img src={logo} alt="Rustpick" className="h-8 w-auto shrink-0" />
           <span className="h-4 w-px bg-border" />
           <span className={cn("flex min-w-0 items-center gap-2 rounded-full bg-card/70 px-2.5 py-1 text-xs font-medium ring-1 ring-foreground/10", statusCls)} title={esc(status)}>
             <Dot />
