@@ -18,6 +18,7 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons"
 import { invoke } from "@/lib/tauri"
+import { countdownParts } from "@/lib/countdown"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -143,7 +144,7 @@ type MinerEvent =
   | { kind: "Channels"; data: Channel[] }
   | { kind: "Watching"; data: number | null }
   | { kind: "Inventory"; data: Campaign[] }
-  | { kind: "Progress"; data: ProgressView }
+  | { kind: "Progress"; data: ProgressView | null }
   | { kind: "Exited" }
 
 /* ---------- constants / helpers ---------- */
@@ -369,11 +370,19 @@ export default function App() {
     invoke<string[]>("list_languages").then(setLanguages).catch(() => setLanguages([]))
     invoke<{ kind: "Log"; data: LogLine }[]>("get_log").then((l) => setLogs((cur) => [...(l ?? []).map((e) => e.data), ...cur])).catch(() => {})
     let un: (() => void) | undefined
+    let unnav: (() => void) | undefined
     ;(async () => {
       un = await window.__TAURI__.event.listen("miner-event", (e) => handle(e.payload as MinerEvent))
+      unnav = await window.__TAURI__.event.listen("navigate", (e) => {
+        const next = e.payload as string
+        if (["main", "inventory", "log", "settings", "help"].includes(next)) setTab(next)
+      })
       await invoke("frontend_ready")
     })()
-    return () => un?.()
+    return () => {
+      un?.()
+      unnav?.()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -431,17 +440,12 @@ export default function App() {
   const games = [...new Set(inventory.map((c) => c.game))].sort()
 
   /* progress countdown derivation */
-  let dropMin = 0, secs = 0
+  let dropMin = 0, dropSecs = 0, campMin = 0, campSecs = 0
   if (progress) {
-    const elapsed = Math.min(60, Math.floor((Date.now() - progressAt) / 1000))
-    if (progress.countdown && elapsed < 60 && progress.drop_required > progress.drop_current) {
-      dropMin = progress.drop_required - progress.drop_current - 1
-      secs = 60 - elapsed
-    } else {
-      dropMin = Math.max(0, progress.drop_required - progress.drop_current)
-    }
+    const elapsed = (Date.now() - progressAt) / 1000
+    ;[dropMin, dropSecs] = countdownParts(progress.drop_required - progress.drop_current, elapsed, progress.countdown)
+    ;[campMin, campSecs] = countdownParts(progress.campaign_remaining_minutes, elapsed, progress.countdown)
   }
-  const campMin = progress ? Math.max(0, progress.campaign_remaining_minutes - (secs > 0 ? 1 : 0)) : 0
 
   /* inventory filter */
   const visibleCampaigns = inventory.filter((c) => {
@@ -572,14 +576,14 @@ export default function App() {
                       title={progress.campaign_name}
                       value={progress.campaign_progress}
                       detail={`${progress.campaign_claimed}/${progress.campaign_total} drops claimed`}
-                      remaining={fmt(campMin, secs)}
+                      remaining={fmt(campMin, campSecs)}
                     />
                     <ProgressBlock
                       label="Current drop"
                       title={progress.drop_rewards}
                       value={progress.drop_progress}
                       detail={`${progress.drop_current}/${progress.drop_required} min`}
-                      remaining={fmt(dropMin, secs)}
+                      remaining={fmt(dropMin, dropSecs)}
                     />
                   </div>
                 ) : (

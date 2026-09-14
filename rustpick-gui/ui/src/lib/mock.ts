@@ -68,6 +68,7 @@ const inventory = [
 
 type Listener = (e: { payload: unknown }) => void
 const listeners = new Set<Listener>()
+let bootTimer: ReturnType<typeof setTimeout> | undefined
 const emit = (kind: string, data?: unknown) => listeners.forEach((l) => l({ payload: { kind, data } }))
 const log = (s: string) => emit("Print", s)
 
@@ -80,7 +81,10 @@ export function install() {
         if (cmd === "get_autostart") return false
         if (cmd === "set_autostart") log(`Autostart ${args?.enabled ? "enabled" : "disabled"}`)
         if (cmd === "list_languages") return ["English", "Deutsch", "Français", "Русский", "简体中文"]
-        if (cmd === "frontend_ready") setTimeout(boot, 50)
+        if (cmd === "frontend_ready") {
+          clearTimeout(bootTimer)
+          bootTimer = setTimeout(boot, 50)
+        }
         if (cmd === "select") log(`Switching to channel ${args?.id ?? "(auto)"}`)
         if (cmd === "reload") log("Reloading…")
         if (cmd === "get_log") return [

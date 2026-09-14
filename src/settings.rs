@@ -185,6 +185,19 @@ pub fn in_active_hours(hour: u8, (start, end): (u8, u8)) -> bool {
     }
 }
 
+/// Current local hour, for GUI active-hours status displays.
+pub fn local_hour() -> u8 {
+    use chrono::Timelike;
+    chrono::Local::now().hour() as u8
+}
+
+/// When outside an active-hours window, the hour at which mining resumes.
+pub fn quiet_hours_end(at_hour: u8, active: Option<(u8, u8)>) -> Option<u8> {
+    active
+        .filter(|window| !in_active_hours(at_hour, *window))
+        .map(|(_, end)| end)
+}
+
 /// Parse `22-6` into `(22, 6)`.
 pub fn parse_active_hours(s: &str) -> Option<(u8, u8)> {
     let (a, b) = s.split_once('-')?;
@@ -372,6 +385,9 @@ mod tests {
         assert!(!in_active_hours(6, (22, 6)) && !in_active_hours(12, (22, 6)));
         assert!(in_active_hours(9, (9, 17)) && !in_active_hours(17, (9, 17)));
         assert!(in_active_hours(3, (8, 8)));
+        assert_eq!(quiet_hours_end(12, Some((22, 6))), Some(6));
+        assert_eq!(quiet_hours_end(23, Some((22, 6))), None);
+        assert_eq!(quiet_hours_end(12, None), None);
     }
 
     #[test]
