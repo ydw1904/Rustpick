@@ -37,4 +37,4 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         with:
-          model: paratera/GLM-5.3-Flash
+          model: paratera/glm-5.3-flash
