@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/rustpick-banner.png" alt="Rustpick crab miner artwork" width="560">
+  <img src="docs/assets/rustpick-banner.png" alt="Rustpick banner showing a crab miner with a pickaxe in a purple crystal cave" width="100%">
 </p>
 
 <h1 align="center">Rustpick</h1>
