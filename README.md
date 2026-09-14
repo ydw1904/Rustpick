@@ -1,115 +1,161 @@
-# Rustpick
+<p align="center">
+  <img src="docs/assets/rustpick-banner.png" alt="Rustpick crab miner artwork" width="560">
+</p>
 
-A Rust port of [TwitchDropsMiner](https://github.com/DevilXD/TwitchDropsMiner), with one
-deliberate change: the mining core is a library with no UI in it, and it ships two frontends,
-a headless CLI and a desktop GUI.
+<h1 align="center">Rustpick</h1>
 
-Watches Twitch channels headlessly (GraphQL + PubSub websocket, no video) to farm drop
-campaign progress, switches channels when one goes offline or a higher priority game comes
-up, and claims drops as they complete.
+<p align="center">
+  A modern desktop app and command-line tool for earning eligible Twitch Drops without playing video.
+</p>
 
-## Status
+> [!IMPORTANT]
+> Rustpick is an early preview. Packaged downloads and Homebrew installs are planned, but are not available yet. Developers can build it from source today.
 
-Early port. What works:
+## What is Rustpick?
 
-- Device-code login (no password handling; you enter a code on twitch.tv/activate)
-- Inventory and campaign fetch, eligibility rules, claiming
-- Channel discovery (campaign allow-lists and game directory), sharded PubSub for
-  stream up/down/viewcount events, 120s online-delay check
-- Watching via the spade "minute-watched" event, GQL progress fallback, pretend-mining
-  with the same 15 minute ceiling as upstream
-- Priority / exclude lists, three priority modes, hourly reload and cleanup triggers
-- `--dump` mode, the single-instance lock, autostart, translations (upstream's
-  `lang/*.json`), importing a TwitchDropsMiner install's `cookies.jar` login session
+Rustpick keeps track of your eligible Twitch Drops campaigns, watches matching channels in the background, and claims rewards when they are ready. It does not play or download the video stream.
 
-Deliberately different from upstream: campaign images need no port (the webview GUI
-already loads them straight from the CDN, so there's no image cache like upstream's
-Tkinter one), and the GUI's own chrome (tabs, buttons) is English-only — the core's
-messages are the ones that come translated.
+It is a Rust port of [TwitchDropsMiner](https://github.com/DevilXD/TwitchDropsMiner) with a shared mining engine and two ways to use it:
 
-Untested against a live account so far: the code paths after login compile and the
-rules have unit tests, but the first real run will likely shake out field-name mistakes.
+- **Desktop app:** a visual interface for campaigns, progress, priorities, settings, and tray operation
+- **CLI:** a lightweight headless option for terminals, servers, and automation
 
-## Build
+Rustpick can switch channels when a stream goes offline or a higher-priority game becomes available. Sign-in uses Twitch's device-code page, so Rustpick never asks for your Twitch password.
 
-```sh
-cargo build --release -p rustpick       # CLI only, skips the Tauri dependency tree
-cd rustpick-gui && npm run tauri build  # GUI: runs the UI build, then cargo --release
-```
+## Why use it?
 
-The first GUI build needs `cd rustpick-gui/ui && npm ci` once (installs Vite, the shadcn
-primitives and the `@tauri-apps/cli` wrapper the `npm run tauri` script calls).
+- Earn eligible Drops while Rustpick runs unattended
+- Avoid streaming video just to make campaign progress
+- See campaigns and progress in one place
+- Prioritize games, exclude campaigns you do not want, and choose how work is ordered
+- Run either a desktop app or a headless CLI backed by the same core
+- Import settings and an existing login session from TwitchDropsMiner
 
-The GUI (`rustpick-gui/`) is a separate workspace crate: a [Tauri](https://tauri.app)
-shell over the same miner core. Its frontend lives in `rustpick-gui/ui/` — React +
-[shadcn/ui](https://ui.shadcn.com) primitives (Tailwind v4, Hugeicons) built with Vite.
-It mirrors the original TDM window: Main / Inventory / Settings / Help tabs plus a tray
-icon.
+## See it in action
 
-Develop the UI with hot reload:
+The desktop app includes **Main**, **Inventory**, **Settings**, and **Help** views, plus a tray mode.
 
-```sh
-cd rustpick-gui && npm run tauri dev    # starts Vite on :5173 + the app with HMR
-```
+> Screenshots are coming as the early desktop interface stabilizes.
 
-Tauri commands must run from `rustpick-gui/` (not `ui/`). Plain `cargo build`/`cargo run`
-on the GUI crate produces a *dev-mode* binary that expects `http://localhost:5173` to be
-serving; add `--features tauri/custom-protocol` to embed `ui/dist` instead and get a
-standalone binary.
+<!-- Add the first desktop screenshot here when ready:
+<p align="center">
+  <img src="docs/screenshots/main.png" alt="Rustpick desktop app showing campaign progress" width="900">
+</p>
+-->
 
-On macOS with Command Line Tools that ship a newer SDK than your `ld` understands
-(`tapi error: unknown architecture arm64e.x1`), point the build at an older SDK:
+## Installation
+
+### Planned downloads
+
+GitHub Releases will be the main source for ready-to-run CLI binaries and desktop packages. The initial targets are macOS on Apple Silicon and Intel, Windows on x86-64, and Linux on x86-64. A Homebrew formula for the CLI and a Homebrew cask for the macOS app are also planned.
+
+The intended Homebrew experience is:
 
 ```sh
-SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk cargo build
+# Planned, not available yet
+brew install rustpick
+brew install --cask rustpick
 ```
 
-(The same `SDKROOT=` prefix works for `npm run tauri dev` / `npm run tauri build`.)
+The formula will install the CLI. The cask will install the macOS desktop app.
 
-## Usage
+### Build from source
+
+You need a current [Rust toolchain](https://rustup.rs/). Building the desktop app also requires Node.js and npm.
+
+Build and run the CLI:
 
 ```sh
-rustpick                         # mine (same as `rustpick run`)
-rustpick -v run                  # more logging (-vv, -vvv); RUST_LOG overrides
-rustpick run --dump              # fetch the inventory once, write dump.dat, exit
-rustpick run --no-interactive-login  # headless: if a login is needed, print the code and exit 4
-rustpick priority "Game A" "Game B"
-rustpick exclude "Game C"
-rustpick mode ending-soonest     # priority-only | ending-soonest | low-avbl-first
-rustpick set badges-emotes true
-rustpick language Deutsch        # no argument lists the bundled languages
-rustpick autostart on            # off | bare to show the current state
-rustpick show                    # print settings.json
-rustpick notify-url https://discord.com/api/webhooks/...  # JSON POST on claims, login needed, all done ("" = off)
-rustpick claims                  # list every claimed drop (claims.jsonl)
-rustpick logout                  # forget the saved token
-rustpick import ~/TwitchDropsMiner   # adopt a TDM install's settings AND cookies.jar login
-rustpick-gui                     # Tauri desktop UI: Main / Inventory / Settings / Help tabs
-rustpick-gui --tray              # start hidden in the tray (what "Autostart in tray" uses)
+cargo build --release -p rustpick
+./target/release/rustpick
 ```
 
-Files (`settings.json`, `auth.json`, `claims.jsonl`, `log.txt`, `lock.file`) live in the current directory, or in
-`$RUSTPICK_DIR` if set. `auth.json` holds your Twitch access token; treat it like a password.
-Only one miner can run per data directory at a time.
+Build the desktop app:
 
-The webhook body carries the message as `content` (Discord), `text` (Slack) and `message` (Gotify),
-plus `title` and the raw `event`. Pause/Resume is in the GUI (Main tab and tray) for now.
+```sh
+cd rustpick-gui/ui
+npm ci
+cd ..
+npm run tauri build
+```
 
-Exit codes: `0` normal exit, `1` fatal error, `3` another instance holds the lock,
-`4` a login is needed and `--no-interactive-login` was given.
+## Getting started
 
-## Architecture
+### Desktop
 
-- `src/miner.rs` is the state machine from upstream `twitch.py`, run as a single task that
-  owns all state. Websocket tasks, timers and frontends send it `Msg`s.
-- Frontends receive `Event`s over a broadcast channel and send `Command`s through a
-  `MinerHandle`. The CLI (`src/bin/cli.rs`) and the Tauri GUI (`rustpick-gui/`) are both thin.
-- `src/http.rs` is the request/GQL layer with upstream's retry and rate-limit rules,
-  `src/inventory.rs` the campaign and drop rules, `src/websocket.rs` the PubSub pool.
-- `src/translate.rs` loads upstream's `lang/*.json` over an embedded English base,
-  `src/lock.rs` is the single-instance lock, `src/autostart.rs` the per-OS login entry,
-  `src/pickle.rs` a minimal Python-pickle reader for upstream's `cookies.jar`.
+1. Open Rustpick.
+2. Follow the sign-in prompt and enter the shown code at `twitch.tv/activate`.
+3. Review your campaigns and choose any game priorities or exclusions.
+4. Leave Rustpick running while it works. It can stay in the system tray.
+
+### CLI
+
+Run Rustpick with no command to start mining:
+
+```sh
+rustpick
+```
+
+On first run, open the activation page shown in the terminal and enter the device code. Useful commands include:
+
+```sh
+rustpick priority "Game A" "Game B"  # Highest priority first
+rustpick exclude "Game C"            # Ignore selected games
+rustpick mode ending-soonest          # Work on campaigns ending soonest
+rustpick claims                       # Show claimed-drop history
+rustpick autostart on                 # Start Rustpick when you sign in
+rustpick logout                       # Forget the saved Twitch token
+rustpick --help                       # Show every command and option
+```
+
+To move from TwitchDropsMiner:
+
+```sh
+rustpick import ~/TwitchDropsMiner
+```
+
+This imports its settings and, when available, its `cookies.jar` login session.
+
+## Current status
+
+Rustpick is an early port. The following pieces are implemented:
+
+- Device-code login, inventory and campaign loading, eligibility checks, and claiming
+- Channel discovery and automatic switching when streams change
+- Drop progress tracking with fallback checks
+- Priority and exclusion lists with multiple ordering modes
+- Desktop, tray, autostart, notifications, and a headless CLI
+- Translated core messages using TwitchDropsMiner language files
+
+The post-login flow has automated tests and compiles, but has not yet been fully tested with a live Twitch account. Expect rough edges until the first public release.
+
+## Data and security
+
+By default, `settings.json`, `auth.json`, `claims.jsonl`, `log.txt`, and `lock.file` are stored in the directory where Rustpick runs. Set `RUSTPICK_DIR` to use a different data directory.
+
+`auth.json` contains your Twitch access token. Treat it like a password and do not share or commit it. Rustpick allows only one miner per data directory at a time.
+
+## For developers
+
+The desktop app and CLI share the same Rust mining core. The CLI lives in `src/bin/cli.rs`; the Tauri desktop app lives in `rustpick-gui/`, with its React interface in `rustpick-gui/ui/`.
+
+Run the desktop app with hot reload:
+
+```sh
+cd rustpick-gui
+npm run tauri dev
+```
+
+Tauri commands must run from `rustpick-gui/`, not `rustpick-gui/ui/`. A plain Cargo build of the GUI expects the Vite development server; use the Tauri commands above for the complete workflow.
+
+On macOS, if a newer SDK is incompatible with the installed linker, select an older installed SDK with `SDKROOT` before the build command.
+
+## Disclaimer
+
+Rustpick is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Twitch Interactive, Inc. Twitch and Twitch Drops are trademarks of their respective owner.
+
+Use Rustpick responsibly and review Twitch's current terms before using automation with your account.
 
 ## License
 
-GPL-3.0, matching upstream TwitchDropsMiner.
+[GPL-3.0](LICENSE), matching TwitchDropsMiner.
