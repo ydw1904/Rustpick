@@ -149,13 +149,13 @@ impl Settings {
 
     pub fn load() -> Result<Self> {
         let path = Self::path();
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let mut s: Settings =
-            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        let mut s: Settings = if path.exists() {
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
+        } else {
+            Self::default()
+        };
         s.apply_env()?;
         s.connection_quality = s.connection_quality.clamp(1, 6);
         Ok(s)
