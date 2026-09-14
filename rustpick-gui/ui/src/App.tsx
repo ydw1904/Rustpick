@@ -8,10 +8,12 @@ import {
   ArrowUpDoubleIcon,
   Copy01Icon,
   Delete02Icon,
+  GemIcon,
   GiftIcon,
   Image01Icon,
   LinkSquare02Icon,
   LockIcon,
+  PickaxeIcon,
   RefreshIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons"
@@ -472,17 +474,20 @@ export default function App() {
   const wsTopics = wsLive.reduce((n, w) => n + w.topics, 0)
 
   return (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as string)} className="h-screen gap-0 bg-background">
-      <header className="flex h-12 shrink-0 items-center gap-4 border-b px-4">
+    <Tabs value={tab} onValueChange={(v) => setTab(v as string)} className="app-shell h-screen gap-0 bg-background">
+      <header className="app-header flex h-14 shrink-0 items-center gap-4 border-b px-4">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="font-heading text-[15px] font-semibold tracking-tight">Rustpick</span>
+          <span className="brand-mark" aria-hidden="true">
+            <HugeiconsIcon icon={PickaxeIcon} size={17} strokeWidth={2.2} />
+          </span>
+          <span className="font-heading text-base font-semibold tracking-tight">Rustpick</span>
           <span className="h-4 w-px bg-border" />
-          <span className={cn("flex min-w-0 items-center gap-2 text-sm", statusCls)}>
+          <span className={cn("flex min-w-0 items-center gap-2 rounded-full bg-card/70 px-2.5 py-1 text-xs font-medium ring-1 ring-foreground/10", statusCls)} title={esc(status)}>
             <Dot />
-            <span className="truncate text-foreground/80">{esc(status)}</span>
+            <span className="max-w-40 truncate text-foreground/80">{esc(status)}</span>
           </span>
         </div>
-        <TabsList className="ml-auto">
+        <TabsList className="ml-auto bg-card/70 shadow-sm ring-1 ring-foreground/10 backdrop-blur">
           <TabsTrigger value="main" className="px-3">Main</TabsTrigger>
           <TabsTrigger value="inventory" className="px-3">Inventory</TabsTrigger>
           <TabsTrigger value="log" className="px-3">Log</TabsTrigger>
@@ -491,8 +496,11 @@ export default function App() {
         </TabsList>
       </header>
       {release && (
-        <div className="flex shrink-0 items-center gap-3 border-b bg-primary/10 px-4 py-1.5 text-sm">
-          <span>Rustpick {release.version} is available.</span>
+        <div className="update-banner flex shrink-0 items-center gap-3 border-b px-4 py-2 text-sm">
+          <span className="flex size-6 items-center justify-center rounded-md bg-primary/15 text-primary" aria-hidden="true">
+            <HugeiconsIcon icon={GemIcon} size={14} strokeWidth={2} />
+          </span>
+          <span><strong>Rustpick {release.version}</strong> is available.</span>
           <a className="cursor-pointer font-medium text-primary hover:underline" onClick={() => invoke("open_url", { url: release.url })}>
             Release notes
           </a>
@@ -546,7 +554,7 @@ export default function App() {
               )}
             </Card>
 
-            <Card size="sm">
+            <Card size="sm" className="mining-card">
               <CardHeader>
                 <CardTitle>Mining progress</CardTitle>
                 <CardAction>
