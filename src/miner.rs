@@ -259,7 +259,8 @@ impl Miner {
             self.status("Paused");
         } else if let Some(id) = self.watching {
             self.watch(id, true);
-        } else {
+        } else if self.state == State::Idle {
+            // mid-chain (fetching inventory/channels) the chain ends in a switch anyway
             self.change_state(State::ChannelSwitch);
         }
     }
@@ -466,7 +467,9 @@ impl Miner {
         if update_status {
             let s = t!["status", "watching"; "channel" => name];
             self.print(s.clone());
-            self.status(s);
+            if !self.paused {
+                self.status(s);
+            }
         }
         self.emit_progress(false);
     }
