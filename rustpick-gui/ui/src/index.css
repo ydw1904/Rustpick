@@ -142,19 +142,6 @@
   backdrop-filter: blur(16px);
 }
 
-.brand-mark {
-  display: inline-flex;
-  width: 2rem;
-  height: 2rem;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.625rem;
-  color: white;
-  background: linear-gradient(135deg, #7c3aed, #a855f7 58%, #f97316);
-  box-shadow: 0 5px 16px color-mix(in oklab, var(--primary) 32%, transparent);
-}
-
 .update-banner {
   background: linear-gradient(90deg, color-mix(in oklab, var(--primary) 14%, var(--background)), color-mix(in oklab, #f97316 7%, var(--background)));
 }

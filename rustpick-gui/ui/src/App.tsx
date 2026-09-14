@@ -13,10 +13,10 @@ import {
   Image01Icon,
   LinkSquare02Icon,
   LockIcon,
-  PickaxeIcon,
   RefreshIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons"
+import logo from "../../icons/128x128.png"
 import { invoke } from "@/lib/tauri"
 import { countdownParts } from "@/lib/countdown"
 import { cn } from "@/lib/utils"
@@ -481,10 +481,7 @@ export default function App() {
     <Tabs value={tab} onValueChange={(v) => setTab(v as string)} className="app-shell h-screen gap-0 bg-background">
       <header className="app-header flex h-14 shrink-0 items-center gap-4 border-b px-4">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="brand-mark" aria-hidden="true">
-            <HugeiconsIcon icon={PickaxeIcon} size={17} strokeWidth={2.2} />
-          </span>
-          <span className="font-heading text-base font-semibold tracking-tight">Rustpick</span>
+          <img src={logo} alt="Rustpick" className="size-8 shrink-0" />
           <span className="h-4 w-px bg-border" />
           <span className={cn("flex min-w-0 items-center gap-2 rounded-full bg-card/70 px-2.5 py-1 text-xs font-medium ring-1 ring-foreground/10", statusCls)} title={esc(status)}>
             <Dot />
@@ -730,7 +727,7 @@ export default function App() {
         {visibleCampaigns.map((c) => {
           const [label, cls] = CAMP_STATUS[c.status === "Active" ? `Active_${c.eligible}` : c.status] ?? ["", DIM]
           return (
-            <Card key={c.id} size="sm">
+            <Card key={c.id} size="sm" className="shrink-0">
               <CardContent className="flex flex-col gap-4 md:flex-row">
                 <div className="flex w-full shrink-0 gap-3 md:w-80">
                   <div className="flex h-24 w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground/50">
