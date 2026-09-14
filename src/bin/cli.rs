@@ -16,6 +16,10 @@ struct Cli {
     /// Write logs to log.txt in the data directory instead of stderr
     #[arg(long, global = true)]
     log: bool,
+    /// Use a named profile (its own settings, login and lock) under the user config dir.
+    /// RUSTPICK_DIR still wins when set.
+    #[arg(long, global = true)]
+    profile: Option<String>,
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
@@ -45,6 +49,16 @@ enum Cmd {
     NotifyUrl { url: String },
     /// Print the claimed drops history (claims.jsonl)
     Claims,
+    /// Show what the running miner is doing (from status.json)
+    Status {
+        /// Print nothing; exit 1 unless a running miner updated status.json in the last 10 minutes
+        #[arg(long)]
+        check: bool,
+    },
+    /// List active campaigns that need a linked game account (from status.json)
+    Unlinked,
+    /// Only mine between these local hours, e.g. 22-6 (wraps past midnight); "off" to always mine
+    ActiveHours { hours: String },
     /// Set the UI language (run `rustpick language` for the list)
     Language { name: Option<String> },
     /// Forget the saved Twitch login
@@ -58,6 +72,9 @@ enum Cmd {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(p) = &cli.profile {
+        rustpick::settings::set_profile(p)?;
+    }
     rustpick::init_logging(cli.verbose, cli.log)?;
     let mut settings = Settings::load()?;
     rustpick::translate::init(&settings.language);
@@ -70,6 +87,17 @@ async fn main() -> Result<()> {
         }
         Cmd::NotifyUrl { url } => settings.notify_url = url,
         Cmd::Claims => return print_claims(),
+        Cmd::Status { check } => return print_status(check),
+        Cmd::Unlinked => return print_unlinked(),
+        Cmd::ActiveHours { hours } => {
+            settings.active_hours = match hours.as_str() {
+                "off" => None,
+                _ => Some(
+                    rustpick::settings::parse_active_hours(&hours)
+                        .ok_or_else(|| anyhow!("expected START-END hours like 22-6, or off"))?,
+                ),
+            };
+        }
         Cmd::Priority { games } => settings.priority = games,
         Cmd::Exclude { games } => settings.exclude = games.into_iter().collect(),
         Cmd::Mode { mode } => {
@@ -143,6 +171,80 @@ fn import_tdm_login(path: &std::path::Path) -> Result<()> {
             println!("Imported the login session from {}", dir.join("cookies.jar").display());
         }
         None => println!("No usable cookies.jar found next to the settings (you'll need to log in)."),
+    }
+    Ok(())
+}
+
+fn read_status() -> Result<serde_json::Value> {
+    let path = data_dir().join(rustpick::status::FILE);
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {} (is a miner running for this data dir?)", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+}
+
+/// Minutes since the miner last wrote status.json, None if it exited or the file is unusable.
+fn status_age_minutes(v: &serde_json::Value) -> Option<i64> {
+    let updated = v["updated_at"].as_str()?.parse::<chrono::DateTime<chrono::Utc>>().ok()?;
+    (!v["exited"].as_bool().unwrap_or(false)).then(|| (chrono::Utc::now() - updated).num_minutes())
+}
+
+fn print_status(check: bool) -> Result<()> {
+    let v = read_status();
+    if check {
+        let healthy = v.ok().and_then(|v| status_age_minutes(&v)).is_some_and(|m| m < 10);
+        std::process::exit(if healthy { 0 } else { 1 });
+    }
+    let v = v?;
+    let updated = v["updated_at"]
+        .as_str()
+        .and_then(|t| t.parse::<chrono::DateTime<chrono::Utc>>().ok())
+        .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default();
+    let state = match status_age_minutes(&v) {
+        None => "exited",
+        Some(m) if m >= 10 => "stale (miner not updating)",
+        _ if v["login_required"].as_bool() == Some(true) => "waiting for login",
+        _ if v["paused"].as_bool() == Some(true) => "paused",
+        _ => "running",
+    };
+    let s = |x: &serde_json::Value| x.as_str().unwrap_or("-").to_owned();
+    let n = |x: &serde_json::Value| x.as_u64().unwrap_or(0);
+    println!("State:    {state} (pid {}, updated {updated})", n(&v["pid"]));
+    println!("Status:   {}", s(&v["status"]));
+    println!("Channel:  {}", s(&v["channel"]));
+    let p = &v["progress"];
+    if p.is_object() {
+        println!("Game:     {} | {}", s(&p["game"]), s(&p["campaign_name"]));
+        println!(
+            "Drop:     {} | {}/{} min, {} min left",
+            s(&p["drop_rewards"]),
+            n(&p["drop_current"]),
+            n(&p["drop_required"]),
+            n(&p["drop_required"]).saturating_sub(n(&p["drop_current"]))
+        );
+        println!(
+            "Campaign: {}/{} drops, {} min left",
+            n(&p["campaign_claimed"]),
+            n(&p["campaign_total"]),
+            n(&p["campaign_remaining_minutes"])
+        );
+    }
+    let unlinked = v["unlinked"].as_array().map(Vec::len).unwrap_or(0);
+    if unlinked > 0 {
+        println!("Unlinked: {unlinked} active campaign(s) need a linked account (rustpick unlinked)");
+    }
+    Ok(())
+}
+
+fn print_unlinked() -> Result<()> {
+    let v = read_status()?;
+    let list = v["unlinked"].as_array().cloned().unwrap_or_default();
+    if list.is_empty() {
+        println!("No active campaigns need a linked account.");
+    }
+    for c in list {
+        let s = |k: &str| c[k].as_str().unwrap_or("").to_owned();
+        println!("{} | {} | {}", s("game"), s("campaign"), s("link_url"));
     }
     Ok(())
 }
@@ -286,7 +388,8 @@ impl Printer {
                 }
             }
             Event::Progress(None) => self.last_progress = None,
-            Event::Watching(_) | Event::Websocket { .. } | Event::DropClaimed(_) => {}
+            // the miner already prints a line for these
+            Event::Watching(_) | Event::Websocket { .. } | Event::DropClaimed(_) | Event::UnlinkedCampaign { .. } => {}
             Event::Exited => self.line("Exited."),
         }
     }

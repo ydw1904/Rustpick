@@ -13,6 +13,7 @@ const settings = {
   language: "English",
   tray_notifications: true,
   notify_url: "",
+  active_hours: null as [number, number] | null,
   autostart_tray: false,
 }
 
@@ -37,7 +38,7 @@ const iso = (h: number) => new Date(now + h * 3600_000).toISOString()
 const inventory = [
   {
     id: "c1", name: "Rust Twitch Drops Round 26", game: "Rust", image_url: "", link_url: "https://twitch.facepunch.com",
-    linked: true, eligible: true, status: "Active", starts_at: iso(-48), ends_at: iso(96), progress: 0.4, claimed: 2, total: 5,
+    linked: true, needs_link: !true, eligible: true, status: "Active", starts_at: iso(-48), ends_at: iso(96), progress: 0.4, claimed: 2, total: 5,
     drops: [
       drop("d1", "Drop 1", "Neon Hoodie", 120, 120, true),
       drop("d2", "Drop 2", "Glowing Sledgehammer", 240, 240, true),
@@ -48,17 +49,17 @@ const inventory = [
   },
   {
     id: "c2", name: "Warframe: Techrot Encore", game: "Warframe", image_url: "", link_url: "https://warframe.com/twitch",
-    linked: false, eligible: false, status: "Active", starts_at: iso(-10), ends_at: iso(30), progress: 0, claimed: 0, total: 2,
+    linked: false, needs_link: !false, eligible: false, status: "Active", starts_at: iso(-10), ends_at: iso(30), progress: 0, claimed: 0, total: 2,
     drops: [drop("d6", "Drop 1", "Orokin Reactor", 0, 60), drop("d7", "Drop 2", "Forma Bundle", 0, 120)],
   },
   {
     id: "c3", name: "Path of Exile 2 Launch Week", game: "Path of Exile 2", image_url: "", link_url: "",
-    linked: true, eligible: true, status: "Upcoming", starts_at: iso(12), ends_at: iso(200), progress: 0, claimed: 0, total: 1,
+    linked: true, needs_link: !true, eligible: true, status: "Upcoming", starts_at: iso(12), ends_at: iso(200), progress: 0, claimed: 0, total: 1,
     drops: [drop("d8", "Drop 1", "Twitch Portal Effect", 0, 180)],
   },
   {
     id: "c4", name: "Fortnite OG Weekend", game: "Fortnite", image_url: "", link_url: "",
-    linked: true, eligible: true, status: "Expired", starts_at: iso(-200), ends_at: iso(-40), progress: 1, claimed: 1, total: 1,
+    linked: true, needs_link: !true, eligible: true, status: "Expired", starts_at: iso(-200), ends_at: iso(-40), progress: 1, claimed: 1, total: 1,
     drops: [drop("d9", "Drop 1", "OG Spray", 60, 60, true)],
   },
 ]

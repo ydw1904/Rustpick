@@ -82,6 +82,7 @@ interface Campaign {
   image_url: string
   link_url: string
   linked: boolean
+  needs_link: boolean
   eligible: boolean
   status: CampaignStatus
   starts_at: string
@@ -119,6 +120,7 @@ interface Settings {
   tray_notifications: boolean
   autostart_tray: boolean
   notify_url: string
+  active_hours: [number, number] | null
 }
 
 type MinerEvent =
@@ -129,6 +131,7 @@ type MinerEvent =
   | { kind: "LoginRequired" }
   | { kind: "DropClaimed"; data: { ts: string; game: string; campaign: string; drop: string; rewards: string; benefit_ids: string[] } }
   | { kind: "AllDone" }
+  | { kind: "UnlinkedCampaign"; data: { game: string; campaign: string; link_url: string } }
   | { kind: "Paused"; data: boolean }
   | { kind: "Websocket"; data: { idx: number; status: string; topics: number } }
   | { kind: "Channels"; data: Channel[] }
@@ -138,6 +141,19 @@ type MinerEvent =
   | { kind: "Exited" }
 
 /* ---------- constants / helpers ---------- */
+
+const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`)
+
+function HourSelect({ value, onChange }: { value: number; onChange: (h: number) => void }) {
+  return (
+    <Select items={Object.fromEntries(HOURS.map((l, h) => [String(h), l]))} value={String(value)} onValueChange={(v) => onChange(Number(v))}>
+      <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {HOURS.map((l, h) => <SelectItem key={h} value={String(h)}>{l}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  )
+}
 
 const WS_MAX_TOPICS = 50
 const WS_SLOTS = 8
@@ -745,6 +761,21 @@ export default function App() {
                   value={settings?.notify_url ?? ""}
                   onChange={(e) => update({ notify_url: e.target.value })}
                 />
+                <label htmlFor="s-hours">Active hours</label>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="s-hours"
+                    checked={settings?.active_hours != null}
+                    onCheckedChange={(checked) => update({ active_hours: checked ? [22, 6] : null })}
+                  />
+                  {settings?.active_hours != null && (
+                    <>
+                      <HourSelect value={settings.active_hours[0]} onChange={(h) => update({ active_hours: [h, settings.active_hours![1]] })} />
+                      <span className="text-muted-foreground">to</span>
+                      <HourSelect value={settings.active_hours[1]} onChange={(h) => update({ active_hours: [settings.active_hours![0], h] })} />
+                    </>
+                  )}
+                </div>
                 <label htmlFor="s-quality">Connection quality</label>
                 <div className="flex items-center gap-3">
                   <Slider

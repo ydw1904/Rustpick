@@ -15,6 +15,7 @@ pub mod miner;
 pub mod notify;
 pub mod pickle;
 pub mod settings;
+pub mod status;
 pub mod translate;
 pub mod util;
 pub mod websocket;

@@ -178,6 +178,19 @@ fn show_main(app: &AppHandle) {
 }
 
 fn main() {
+    // `--profile <name>`: a separate settings/login/lock directory, one process per profile
+    let args: Vec<String> = std::env::args().collect();
+    let profile = args.iter().position(|a| a == "--profile").and_then(|i| args.get(i + 1)).cloned();
+    if let Some(p) = &profile
+        && let Err(e) = rustpick::settings::set_profile(p)
+    {
+        eprintln!("--profile: {e:#}");
+        std::process::exit(2);
+    }
+    let title = match &profile {
+        Some(p) => format!("Rustpick ({p})"),
+        None => "Rustpick".to_owned(),
+    };
     let settings = Settings::load().unwrap_or_else(|e| {
         eprintln!("settings: {e}");
         Settings::default()
@@ -218,7 +231,7 @@ fn main() {
             copy_text,
             frontend_ready,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause", "Pause", true, None::<&str>)?;
@@ -226,7 +239,7 @@ fn main() {
             app.manage(PauseItem(pause));
             TrayIconBuilder::new()
                 .icon(tray_icon())
-                .tooltip("Rustpick")
+                .tooltip(&title)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -244,6 +257,9 @@ fn main() {
                     }
                 })
                 .build(app)?;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_title(&title);
+            }
             // the window starts hidden (tauri.conf.json); `--tray` keeps it that way
             if !std::env::args().any(|a| a == "--tray") {
                 show_main(app.handle());

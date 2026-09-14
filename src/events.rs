@@ -33,6 +33,8 @@ pub enum Event {
     DropClaimed(Claim),
     /// There were campaigns to mine and now there are none left.
     AllDone,
+    /// An active campaign needs a game account linked before it can earn; sent once per campaign.
+    UnlinkedCampaign { game: String, campaign: String, link_url: String },
     Paused(bool),
     Websocket { idx: usize, status: String, topics: usize },
     Channels(Vec<ChannelView>),
@@ -88,6 +90,8 @@ pub struct CampaignView {
     pub image_url: String,
     pub link_url: String,
     pub linked: bool,
+    /// Earning requires linking a game account that isn't linked yet.
+    pub needs_link: bool,
     pub eligible: bool,
     pub status: CampaignStatus,
     pub starts_at: DateTime<Utc>,

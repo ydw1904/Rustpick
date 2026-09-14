@@ -1,0 +1,17 @@
+# First start: `docker compose logs -f` shows the Twitch activation URL and code.
+services:
+  rustpick:
+    image: ghcr.io/ydw1904/rustpick:latest
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+      # active hours use local time; without this the container runs on UTC
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      RUSTPICK_PRIORITY: "Rust,Marvel Rivals"
+      RUSTPICK_PRIORITY_MODE: priority-only
+      # RUSTPICK_NOTIFY_URL: https://discord.com/api/webhooks/...
+      # RUSTPICK_ACTIVE_HOURS: "22-6"
+    # add --no-interactive-login to exit with code 4 instead of waiting when the login expires
+    command: ["run"]
