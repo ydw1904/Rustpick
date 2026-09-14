@@ -213,7 +213,12 @@ impl Campaign {
     }
 
     pub fn eligible(&self, badges_emotes_enabled: bool) -> bool {
-        if self.has_badge_or_emote { badges_emotes_enabled } else { self.linked }
+        if self.has_badge_or_emote { badges_emotes_enabled } else { !self.needs_link() }
+    }
+
+    /// Badge/emote campaigns don't need a linked account; everything else does.
+    pub fn needs_link(&self) -> bool {
+        !self.has_badge_or_emote && !self.linked
     }
 
     pub fn finished(&self) -> bool {

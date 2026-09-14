@@ -103,6 +103,9 @@ rustpick priority "Game A" "Game B"  # Highest priority first
 rustpick exclude "Game C"            # Ignore selected games
 rustpick mode ending-soonest          # Work on campaigns ending soonest
 rustpick claims                       # Show claimed-drop history
+rustpick status                       # What the running miner is doing
+rustpick unlinked                     # Active campaigns that need a linked game account
+rustpick active-hours 22-6            # Only mine between 22:00 and 06:00 local time ("off" to stop)
 rustpick autostart on                 # Start Rustpick when you sign in
 rustpick logout                       # Forget the saved Twitch token
 rustpick --help                       # Show every command and option
@@ -115,6 +118,32 @@ rustpick import ~/TwitchDropsMiner
 ```
 
 This imports its settings and, when available, its `cookies.jar` login session.
+
+### Multiple accounts
+
+Each profile has its own settings, login and lock, and runs as its own process:
+
+```sh
+rustpick --profile main
+rustpick --profile alt
+rustpick-gui --profile alt            # separate window and tray icon
+```
+
+Profiles live in the user config directory (`~/Library/Application Support/rustpick/<name>` on
+macOS, `~/.config/rustpick/<name>` on Linux, `%APPDATA%\rustpick\<name>` on Windows).
+Autostart entries are per profile. `RUSTPICK_DIR` still overrides everything.
+
+### Docker
+
+```sh
+docker compose up -d && docker compose logs -f   # enter the shown code once
+```
+
+See `docker-compose.yml`. Data lives in the `/data` volume, the health check fails when the miner
+stops updating `status.json`, and images are published to `ghcr.io/ydw1904/rustpick` on tags.
+Any of `RUSTPICK_PROXY`, `RUSTPICK_NOTIFY_URL`, `RUSTPICK_LANGUAGE`, `RUSTPICK_PRIORITY_MODE`,
+`RUSTPICK_CONNECTION_QUALITY`, `RUSTPICK_ACTIVE_HOURS` and the comma-separated
+`RUSTPICK_PRIORITY` / `RUSTPICK_EXCLUDE` override `settings.json` (and get saved into it).
 
 ## Current status
 
@@ -131,7 +160,7 @@ The post-login flow has automated tests and compiles, but has not yet been fully
 
 ## Data and security
 
-By default, `settings.json`, `auth.json`, `claims.jsonl`, `log.txt`, and `lock.file` are stored in the directory where Rustpick runs. Set `RUSTPICK_DIR` to use a different data directory.
+By default, `settings.json`, `auth.json`, `claims.jsonl`, `status.json`, `log.txt`, and `lock.file` are stored in the directory where Rustpick runs. Set `RUSTPICK_DIR` to use a different data directory.
 
 `auth.json` contains your Twitch access token. Treat it like a password and do not share or commit it. Rustpick allows only one miner per data directory at a time.
 

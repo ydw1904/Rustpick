@@ -5,9 +5,17 @@
 //! CLI, `--tray` for the GUI) and `RUSTPICK_DIR` baked in, since our data
 //! directory is resolved from the environment/current directory.
 
-use crate::settings::data_dir;
+use crate::settings::{data_dir, profile};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+
+/// `base`, suffixed with the profile name so each profile gets its own entry.
+fn entry_name(base: &str) -> String {
+    match profile() {
+        Some(p) => format!("{base}-{p}"),
+        None => base.to_owned(),
+    }
+}
 
 /// The command the autostart entry runs: (exe path, absolute data dir).
 fn entry_paths() -> Result<(PathBuf, PathBuf)> {
@@ -22,7 +30,6 @@ mod imp {
     use super::*;
     use std::os::windows::process::CommandExt;
 
-    const VALUE_NAME: &str = "Rustpick";
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -36,7 +43,7 @@ mod imp {
 
     pub fn enabled() -> bool {
         let Ok((exe, dir)) = entry_paths() else { return false };
-        let Ok(out) = reg(&["query", RUN_KEY, "/v", VALUE_NAME]) else { return false };
+        let Ok(out) = reg(&["query", RUN_KEY, "/v", &entry_name("Rustpick")]) else { return false };
         let stdout = String::from_utf8_lossy(&out.stdout);
         out.status.success()
             && stdout.contains(exe.to_string_lossy().as_ref())
@@ -53,9 +60,9 @@ mod imp {
                 exe.display(),
                 args.join(" ")
             );
-            reg(&["add", RUN_KEY, "/v", VALUE_NAME, "/t", "REG_SZ", "/d", &data, "/f"])?;
+            reg(&["add", RUN_KEY, "/v", &entry_name("Rustpick"), "/t", "REG_SZ", "/d", &data, "/f"])?;
         } else {
-            let _ = reg(&["delete", RUN_KEY, "/v", VALUE_NAME, "/f"]); // missing is fine
+            let _ = reg(&["delete", RUN_KEY, "/v", &entry_name("Rustpick"), "/f"]); // missing is fine
         }
         Ok(())
     }
@@ -65,8 +72,6 @@ mod imp {
 mod imp {
     use super::*;
 
-    const DESKTOP_NAME: &str = "rustpick";
-
     fn entry_path() -> PathBuf {
         // like upstream, honour XDG_CONFIG_HOME when it already has an autostart dir
         std::env::var_os("XDG_CONFIG_HOME")
@@ -74,7 +79,7 @@ mod imp {
             .filter(|p| p.join("autostart").is_dir())
             .map(|p| p.join("autostart"))
             .unwrap_or_else(|| home().join(".config/autostart"))
-            .join(format!("{DESKTOP_NAME}.desktop"))
+            .join(format!("{}.desktop", entry_name("rustpick")))
     }
 
     pub(super) fn entry_contents(exe: &Path, dir: &Path, args: &[&str]) -> String {
@@ -116,13 +121,12 @@ mod imp {
 mod imp {
     use super::*;
 
-    const PLIST_LABEL: &str = "com.rustpick.rustpick";
 
     fn entry_path() -> PathBuf {
         std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default()
-            .join(format!("Library/LaunchAgents/{PLIST_LABEL}.plist"))
+            .join(format!("Library/LaunchAgents/{}.plist", entry_name("com.rustpick.rustpick")))
     }
 
     fn xml_escape(s: &str) -> String {
@@ -142,7 +146,7 @@ mod imp {
              \x20\x20<string>{}</string>\n\
              \x20</dict>\n\
              \x20<key>Label</key>\n\
-             \x20<string>{PLIST_LABEL}</string>\n\
+             \x20<string>{}</string>\n\
              \x20<key>ProgramArguments</key>\n\
              \x20<array>\n\
              \x20\x20<string>{}</string>\n\
@@ -153,6 +157,7 @@ mod imp {
              </dict>\n\
              </plist>\n",
             xml_escape(&dir.to_string_lossy()),
+            xml_escape(&entry_name("com.rustpick.rustpick")),
             xml_escape(&exe.to_string_lossy()),
         )
     }
@@ -201,9 +206,14 @@ pub fn enabled() -> bool {
     imp::enabled()
 }
 
-/// Create or remove the autostart entry; `args` follow the executable.
+/// Create or remove the autostart entry; `args` follow the executable. The active
+/// `--profile` is appended so the started instance shows the same profile.
 pub fn set(on: bool, args: &[&str]) -> Result<()> {
-    imp::set(on, args)
+    let mut args = args.to_vec();
+    if let Some(p) = profile() {
+        args.extend(["--profile", p]);
+    }
+    imp::set(on, &args)
 }
 
 #[cfg(test)]

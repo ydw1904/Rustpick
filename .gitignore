@@ -13,3 +13,7 @@ reference/
 /rustpick-gui/gen
 /rustpick-gui/ui/node_modules
 /rustpick-gui/ui/dist
+claims.jsonl
+status.json
+status.json.new
+/data

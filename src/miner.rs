@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::{Map, Value};
 use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -29,6 +29,7 @@ pub enum Msg {
     WatchTick { channel_id: u64, sent_at: Instant },
     MntCleanup,
     MntReload,
+    HoursCheck,
 }
 
 #[derive(Clone)]
@@ -79,6 +80,10 @@ pub struct Miner {
     /// Watch events are held back while paused.
     paused: bool,
     notify_url: watch::Sender<String>,
+    /// What the last active-hours check decided, so a manual resume sticks until the next boundary.
+    outside_hours: bool,
+    /// Campaign IDs already announced via `Event::UnlinkedCampaign`.
+    announced_unlinked: HashSet<String>,
 }
 
 impl Miner {
@@ -111,6 +116,8 @@ impl Miner {
             full_cleanup: false,
             paused: false,
             notify_url,
+            outside_hours: false,
+            announced_unlinked: HashSet::new(),
         };
         Ok((miner, MinerHandle { tx }))
     }
@@ -118,6 +125,20 @@ impl Miner {
     /// Runs until `Command::Exit` or a fatal error. Always emits `Event::Exited` at the end.
     pub async fn run(mut self) -> Result<()> {
         let notifier = crate::notify::spawn(self.events.subscribe(), self.notify_url.subscribe());
+        let status = crate::status::spawn(self.events.subscribe());
+        let hours_tx = self.tx.clone();
+        self.tasks.push(
+            tokio::spawn(async move {
+                let mut every = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    every.tick().await;
+                    if hours_tx.send(Msg::HoursCheck).is_err() {
+                        break;
+                    }
+                }
+            })
+            .abort_handle(),
+        );
         let result = self.run_inner().await;
         if let Err(e) = &result {
             self.print(format!("Fatal error encountered: {e:#}"));
@@ -126,6 +147,7 @@ impl Miner {
         let _ = self.events.send(Event::Exited);
         // let queued notifications (e.g. the login code before a headless exit) go out
         let _ = tokio::time::timeout(Duration::from_secs(10), notifier).await;
+        let _ = status.await;
         result
     }
 
@@ -177,6 +199,7 @@ impl Miner {
                 }
                 Some(Msg::Cmd(Command::Settings(s))) => self.set_settings(s),
                 Some(Msg::Cmd(Command::Pause(p))) => self.set_paused(p),
+                Some(Msg::HoursCheck) => self.check_active_hours(),
                 Some(_) => {}
             }
         }
@@ -207,6 +230,20 @@ impl Miner {
         self.settings = s;
         if let Err(e) = self.settings.save() {
             self.print(format!("Failed to save settings: {e}"));
+        }
+    }
+
+    /// Pause/resume at the active-hours boundaries only, so manual toggles in between stick.
+    fn check_active_hours(&mut self) {
+        use chrono::Timelike;
+        let outside = self
+            .settings
+            .active_hours
+            .is_some_and(|w| !crate::settings::in_active_hours(chrono::Local::now().hour() as u8, w));
+        if outside != self.outside_hours {
+            self.outside_hours = outside;
+            self.print(if outside { "Outside active hours, pausing." } else { "Active hours started, resuming." });
+            self.set_paused(outside);
         }
     }
 
@@ -299,6 +336,7 @@ impl Miner {
             image_url: c.image_url.clone(),
             link_url: c.link_url.clone(),
             linked: c.linked,
+            needs_link: c.needs_link(),
             eligible: c.eligible(self.badges_ok()),
             status: if c.active() {
                 CampaignStatus::Active
@@ -609,6 +647,7 @@ impl Miner {
                 tracing::debug!("Maintenance task requests channels cleanup");
                 self.change_state(State::ChannelsCleanup);
             }
+            Msg::HoursCheck => self.check_active_hours(),
             Msg::MntReload => {
                 tracing::debug!("Maintenance task requests a reload");
                 self.change_state(State::InventoryFetch);
@@ -1169,6 +1208,16 @@ impl Miner {
         triggers.sort();
         triggers.dedup();
         tracing::info!("Inventory: {} campaigns", campaigns.len());
+        for c in campaigns.iter().filter(|c| c.active() && c.needs_link()) {
+            if self.announced_unlinked.insert(c.id.clone()) {
+                self.print(format!("{} ({}) needs a linked account: {}", c.name, c.game.name, c.link_url));
+                let _ = self.events.send(Event::UnlinkedCampaign {
+                    game: c.game.name.clone(),
+                    campaign: c.name.clone(),
+                    link_url: c.link_url.clone(),
+                });
+            }
+        }
         self.inventory = campaigns;
         self.emit_inventory();
         if let Some(h) = self.mnt_task.take() {

@@ -1,0 +1,17 @@
+target
+reference
+docs
+.git
+.github
+.claude
+**/node_modules
+rustpick-gui/ui/dist
+rustpick-gui/gen
+settings.json
+auth.json
+*.jsonl
+status.json
+log.txt
+lock.file
+dump.dat
+cookies.jar

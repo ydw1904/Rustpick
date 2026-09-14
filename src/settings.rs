@@ -57,6 +57,8 @@ pub struct Settings {
     pub autostart_tray: bool,
     /// Webhook URL that gets a JSON POST on claims, login needed and all done; empty for off.
     pub notify_url: String,
+    /// Local-time `[start, end)` hours to mine in, wrapping past midnight (`[22, 6]`); None = always.
+    pub active_hours: Option<(u8, u8)>,
 }
 
 impl Default for Settings {
@@ -74,6 +76,7 @@ impl Default for Settings {
             tray_notifications: true,
             autostart_tray: false,
             notify_url: String::new(),
+            active_hours: None,
         }
     }
 }
@@ -85,11 +88,58 @@ fn tdm_data<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::V
     Some(field.get("data").unwrap_or(field))
 }
 
-/// Directory holding settings.json and auth.json: $RUSTPICK_DIR, else the current directory.
+static PROFILE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Select a named profile for this process. Call once, before anything reads `data_dir()`.
+pub fn set_profile(name: &str) -> Result<()> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        anyhow::bail!("profile names may only use letters, digits, '-' and '_'");
+    }
+    PROFILE.set(name.to_owned()).map_err(|_| anyhow::anyhow!("profile already set"))?;
+    let dir = data_dir();
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))
+}
+
+pub fn profile() -> Option<&'static str> {
+    PROFILE.get().map(String::as_str)
+}
+
+/// The platform's per-user config directory.
+fn config_dir() -> PathBuf {
+    let env = |k| std::env::var_os(k).map(PathBuf::from);
+    let home = || env("HOME").unwrap_or_default();
+    if cfg!(windows) {
+        env("APPDATA").unwrap_or_default()
+    } else if cfg!(target_os = "macos") {
+        home().join("Library/Application Support")
+    } else {
+        env("XDG_CONFIG_HOME").unwrap_or_else(|| home().join(".config"))
+    }
+}
+
+/// Directory holding settings.json and auth.json: $RUSTPICK_DIR, else the `--profile`
+/// directory under the platform config dir, else the current directory.
 pub fn data_dir() -> PathBuf {
     std::env::var_os("RUSTPICK_DIR")
         .map(PathBuf::from)
+        .or_else(|| profile().map(|p| config_dir().join("rustpick").join(p)))
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Is `hour` inside the `[start, end)` window? Wraps past midnight; start == end is all day.
+pub fn in_active_hours(hour: u8, (start, end): (u8, u8)) -> bool {
+    match start.cmp(&end) {
+        std::cmp::Ordering::Equal => true,
+        std::cmp::Ordering::Less => (start..end).contains(&hour),
+        std::cmp::Ordering::Greater => hour >= start || hour < end,
+    }
+}
+
+/// Parse `22-6` into `(22, 6)`.
+pub fn parse_active_hours(s: &str) -> Option<(u8, u8)> {
+    let (a, b) = s.split_once('-')?;
+    let (a, b) = (a.trim().parse::<u8>().ok()?, b.trim().parse::<u8>().ok()?);
+    (a < 24 && b < 24).then_some((a, b))
 }
 
 impl Settings {
@@ -106,8 +156,46 @@ impl Settings {
             .with_context(|| format!("reading {}", path.display()))?;
         let mut s: Settings =
             serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        s.apply_env()?;
         s.connection_quality = s.connection_quality.clamp(1, 6);
         Ok(s)
+    }
+
+    /// `RUSTPICK_<FIELD>` environment overrides (for containers); lists are comma-separated.
+    // ponytail: overrides get persisted by the next save(); split file and env layers if that bites.
+    fn apply_env(&mut self) -> Result<()> {
+        let var = |k: &str| std::env::var(format!("RUSTPICK_{k}")).ok();
+        fn list<T: FromIterator<String>>(v: String) -> T {
+            v.split(',').map(str::trim).filter(|x| !x.is_empty()).map(String::from).collect()
+        }
+        if let Some(v) = var("PROXY") {
+            self.proxy = v;
+        }
+        if let Some(v) = var("NOTIFY_URL") {
+            self.notify_url = v;
+        }
+        if let Some(v) = var("LANGUAGE") {
+            self.language = v;
+        }
+        if let Some(v) = var("PRIORITY") {
+            self.priority = list(v);
+        }
+        if let Some(v) = var("EXCLUDE") {
+            self.exclude = list(v);
+        }
+        if let Some(v) = var("PRIORITY_MODE") {
+            self.priority_mode = PriorityMode::parse(&v).with_context(|| format!("RUSTPICK_PRIORITY_MODE={v}"))?;
+        }
+        if let Some(v) = var("ACTIVE_HOURS") {
+            self.active_hours = match v.as_str() {
+                "" | "off" => None,
+                _ => Some(parse_active_hours(&v).with_context(|| format!("RUSTPICK_ACTIVE_HOURS={v}"))?),
+            };
+        }
+        if let Some(v) = var("CONNECTION_QUALITY") {
+            self.connection_quality = v.parse().with_context(|| format!("RUSTPICK_CONNECTION_QUALITY={v}"))?;
+        }
+        Ok(())
     }
 
     /// Build settings from a TwitchDropsMiner install. `path` is either its
@@ -210,6 +298,16 @@ mod tests {
         assert!(s.autostart_tray);
         assert!(s.tray_notifications); // absent from the file, keeps the default
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn active_hours_window() {
+        assert_eq!(parse_active_hours("22-06"), Some((22, 6)));
+        assert_eq!(parse_active_hours("9-24"), None);
+        assert!(in_active_hours(23, (22, 6)) && in_active_hours(5, (22, 6)));
+        assert!(!in_active_hours(6, (22, 6)) && !in_active_hours(12, (22, 6)));
+        assert!(in_active_hours(9, (9, 17)) && !in_active_hours(17, (9, 17)));
+        assert!(in_active_hours(3, (8, 8)));
     }
 
     #[test]

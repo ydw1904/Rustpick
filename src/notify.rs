@@ -14,6 +14,9 @@ fn text(ev: &Event) -> Option<String> {
     match ev {
         Event::DropClaimed(c) => Some(format!("Claimed drop: {} {} ({})", c.game, c.rewards, c.campaign)),
         Event::LoginCode { url, code } => Some(format!("Twitch login needed: open {url} and enter the code {code}")),
+        Event::UnlinkedCampaign { game, campaign, link_url } => {
+            Some(format!("{campaign} ({game}) needs a linked account before it can earn: {link_url}"))
+        }
         Event::AllDone => Some("All campaigns are done, nothing left to mine.".to_owned()),
         _ => None,
     }
