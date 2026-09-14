@@ -70,7 +70,10 @@ function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   return (
     <TabsPrimitive.Panel
       data-slot="tabs-content"
-      className={cn("flex-1 text-sm outline-none", className)}
+      className={cn(
+        "flex-1 text-sm outline-none animate-in fade-in-0 zoom-in-[0.99] slide-in-from-top-2 duration-200",
+        className,
+      )}
       {...props}
     />
   )
