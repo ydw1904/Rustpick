@@ -12,6 +12,7 @@ pub mod http;
 pub mod inventory;
 pub mod lock;
 pub mod miner;
+pub mod notify;
 pub mod pickle;
 pub mod settings;
 pub mod translate;

@@ -76,6 +76,9 @@ pub struct Miner {
     mnt_task: Option<AbortHandle>,
     last_progress: Instant,
     full_cleanup: bool,
+    /// Watch events are held back while paused.
+    paused: bool,
+    notify_url: watch::Sender<String>,
 }
 
 impl Miner {
@@ -84,6 +87,7 @@ impl Miner {
         let (tx, rx) = mpsc::unbounded_channel();
         let (watch_tx, watch_rx) = watch::channel(None);
         let ws = WsPool::new(http.clone(), tx.clone(), events.clone());
+        let notify_url = watch::Sender::new(settings.notify_url.clone());
         let miner = Miner {
             settings,
             http,
@@ -105,18 +109,23 @@ impl Miner {
             mnt_task: None,
             last_progress: Instant::now(),
             full_cleanup: false,
+            paused: false,
+            notify_url,
         };
         Ok((miner, MinerHandle { tx }))
     }
 
     /// Runs until `Command::Exit` or a fatal error. Always emits `Event::Exited` at the end.
     pub async fn run(mut self) -> Result<()> {
+        let notifier = crate::notify::spawn(self.events.subscribe(), self.notify_url.subscribe());
         let result = self.run_inner().await;
         if let Err(e) = &result {
             self.print(format!("Fatal error encountered: {e:#}"));
         }
         self.shutdown().await;
         let _ = self.events.send(Event::Exited);
+        // let queued notifications (e.g. the login code before a headless exit) go out
+        let _ = tokio::time::timeout(Duration::from_secs(10), notifier).await;
         result
     }
 
@@ -166,10 +175,8 @@ impl Miner {
                     self.state = State::Exit;
                     return;
                 }
-                Some(Msg::Cmd(Command::Settings(s))) => {
-                    self.settings = s;
-                    let _ = self.settings.save();
-                }
+                Some(Msg::Cmd(Command::Settings(s))) => self.set_settings(s),
+                Some(Msg::Cmd(Command::Pause(p))) => self.set_paused(p),
                 Some(_) => {}
             }
         }
@@ -194,6 +201,31 @@ impl Miner {
     }
 
     // ---- small helpers -------------------------------------------------------------------
+
+    fn set_settings(&mut self, s: Settings) {
+        self.notify_url.send_replace(s.notify_url.clone());
+        self.settings = s;
+        if let Err(e) = self.settings.save() {
+            self.print(format!("Failed to save settings: {e}"));
+        }
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        if self.paused == paused {
+            return;
+        }
+        self.paused = paused;
+        let _ = self.events.send(Event::Paused(paused));
+        if paused {
+            // the watch loop idles on None; `watching` is kept so resume picks the same channel
+            let _ = self.watch_tx.send(None);
+            self.status("Paused");
+        } else if let Some(id) = self.watching {
+            self.watch(id, true);
+        } else {
+            self.change_state(State::ChannelSwitch);
+        }
+    }
 
     fn change_state(&mut self, s: State) {
         if self.state != State::Exit {
@@ -389,7 +421,9 @@ impl Miner {
         let target = WatchTarget::new(ch, stream, self.http.info.url, self.http.user_id());
         let name = ch.name().to_owned();
         self.watching = Some(id);
-        let _ = self.watch_tx.send(Some(target));
+        if !self.paused {
+            let _ = self.watch_tx.send(Some(target));
+        }
         let _ = self.events.send(Event::Watching(Some(id)));
         if update_status {
             let s = t!["status", "watching"; "channel" => name];
@@ -550,12 +584,8 @@ impl Miner {
                 self.selected = id;
                 self.change_state(State::ChannelSwitch);
             }
-            Msg::Cmd(Command::Settings(s)) => {
-                self.settings = s;
-                if let Err(e) = self.settings.save() {
-                    self.print(format!("Failed to save settings: {e}"));
-                }
-            }
+            Msg::Cmd(Command::Settings(s)) => self.set_settings(s),
+            Msg::Cmd(Command::Pause(p)) => self.set_paused(p),
             // Event handlers are non-fatal, like upstream's task_wrapper (logged, not raised).
             Msg::Ws { topic, message } => {
                 if let Err(e) = self.process_ws(topic, message).await {
@@ -717,7 +747,7 @@ impl Miner {
 
     /// 20s after each watch payload: if Twitch didn't report progress, ask GQL, else pretend.
     async fn watch_tick(&mut self, channel_id: u64, sent_at: Instant) -> Result<()> {
-        if self.watching != Some(channel_id) || self.last_progress > sent_at {
+        if self.paused || self.watching != Some(channel_id) || self.last_progress > sent_at {
             return Ok(());
         }
         let Some(ch) = self.channel(channel_id).cloned() else { return Ok(()) };
@@ -803,9 +833,20 @@ impl Miner {
                 c.claimed_drops(),
                 c.total_drops()
             );
-            let msg = t!["status", "claimed_drop"; "drop" => drop_text];
-            self.print(msg.clone());
-            let _ = self.events.send(Event::DropClaimed(msg));
+            self.print(t!["status", "claimed_drop"; "drop" => drop_text]);
+            let d = &c.drops[di];
+            let claim = Claim {
+                ts: Utc::now(),
+                game: c.game.name.clone(),
+                campaign: c.name.clone(),
+                drop: d.name.clone(),
+                rewards: d.rewards_text(),
+                benefit_ids: d.benefits.iter().map(|b| b.id.clone()).collect(),
+            };
+            if let Err(e) = append_claim(&claim) {
+                tracing::error!("Writing claims.jsonl failed: {e}");
+            }
+            let _ = self.events.send(Event::DropClaimed(claim));
             self.emit_inventory();
         } else {
             tracing::error!("Drop claim has potentially failed! Drop ID: {drop_id}");
@@ -897,6 +938,9 @@ impl Miner {
             }
         }
         tracing::info!("Wanted games: {:?}", wanted.iter().map(|g| g.name.as_str()).collect::<Vec<_>>());
+        if wanted.is_empty() && !self.wanted_games.is_empty() {
+            let _ = self.events.send(Event::AllDone);
+        }
         self.wanted_games = wanted;
         self.full_cleanup = true;
         self.restart_watching();
@@ -1241,6 +1285,19 @@ impl Miner {
         }
         Ok(())
     }
+}
+
+/// Claim history: one JSON line per claimed drop in `claims.jsonl`.
+pub fn append_claim(claim: &Claim) -> Result<()> {
+    use std::io::Write;
+    let mut line = serde_json::to_string(claim)?;
+    line.push('\n');
+    std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(data_dir().join("claims.jsonl"))?
+        .write_all(line.as_bytes())?;
+    Ok(())
 }
 
 async fn fetch_campaigns(http: Arc<Http>, uid: u64, chunk: Vec<(String, Value)>) -> Result<Map<String, Value>> {
