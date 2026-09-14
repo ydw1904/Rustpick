@@ -23,6 +23,10 @@ pub enum Command {
 pub enum Event {
     /// A line for the console/output window.
     Print(String),
+    /// A core tracing record at info level or above, for the GUI log tab.
+    Log { ts: DateTime<Utc>, level: String, msg: String },
+    /// A newer GitHub release than this build exists.
+    UpdateAvailable { version: String, url: String },
     /// Short status bar text.
     Status(String),
     /// A saved login was rejected by Twitch; a `LoginCode` follows.
@@ -45,6 +49,13 @@ pub enum Event {
     Exited,
 }
 
+impl Event {
+    /// An `Event::Log` entry stamped now.
+    pub fn log(level: impl Into<String>, msg: impl Into<String>) -> Event {
+        Event::Log { ts: Utc::now(), level: level.into(), msg: msg.into() }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum ChannelStatus {
     Online,
@@ -55,6 +66,7 @@ pub enum ChannelStatus {
 #[derive(Clone, Debug, Serialize)]
 pub struct ChannelView {
     pub id: u64,
+    pub login: String,
     pub name: String,
     pub url: String,
     pub acl_based: bool,

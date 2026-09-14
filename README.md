@@ -104,6 +104,8 @@ rustpick exclude "Game C"            # Ignore selected games
 rustpick mode ending-soonest          # Work on campaigns ending soonest
 rustpick claims                       # Show claimed-drop history
 rustpick status                       # What the running miner is doing
+rustpick check                        # Test proxy, login, GQL and PubSub; exits 1 on failure
+rustpick run --metrics 127.0.0.1:9184 # Also serve Prometheus metrics
 rustpick unlinked                     # Active campaigns that need a linked game account
 rustpick active-hours 22-6            # Only mine between 22:00 and 06:00 local time ("off" to stop)
 rustpick autostart on                 # Start Rustpick when you sign in
@@ -118,6 +120,11 @@ rustpick import ~/TwitchDropsMiner
 ```
 
 This imports its settings and, when available, its `cookies.jar` login session.
+
+After a restart Rustpick goes straight back to the channel it was watching (if the previous run
+ended less than 3 hours ago and the channel still qualifies) while discovery runs. Once a day it
+checks GitHub for a newer release and only tells you about it; turn that off with
+`"check_updates": false`. The desktop app has a Log tab with level filter, search and copy.
 
 ### Multiple accounts
 

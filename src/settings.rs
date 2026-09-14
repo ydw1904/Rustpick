@@ -59,6 +59,8 @@ pub struct Settings {
     pub notify_url: String,
     /// Local-time `[start, end)` hours to mine in, wrapping past midnight (`[22, 6]`); None = always.
     pub active_hours: Option<(u8, u8)>,
+    /// Check GitHub once a day for a newer release (notify only).
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -77,6 +79,7 @@ impl Default for Settings {
             autostart_tray: false,
             notify_url: String::new(),
             active_hours: None,
+            check_updates: true,
         }
     }
 }
@@ -154,7 +157,7 @@ impl Settings {
                 .with_context(|| format!("reading {}", path.display()))?;
             serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
         } else {
-            Self::default()
+            Self::default() // env overrides still apply, e.g. a fresh container volume
         };
         s.apply_env()?;
         s.connection_quality = s.connection_quality.clamp(1, 6);

@@ -7,6 +7,7 @@
 
 use rustpick::events::Event;
 use rustpick::{Command, Miner, MinerHandle, Settings};
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem};
@@ -20,6 +21,8 @@ struct AppState {
     /// The core, taken and started once the webview signals it is listening.
     miner: Mutex<Option<Miner>>,
     events: broadcast::Sender<Event>,
+    /// The last `LOG_LINES` log-tab entries, so a reloaded page can refill its log.
+    log: Mutex<VecDeque<Event>>,
     /// Mirrors the last `Event::Paused`, for the tray toggle.
     paused: AtomicBool,
 }
@@ -98,6 +101,13 @@ fn select(state: tauri::State<AppState>, id: Option<u64>) {
     state.handle.send(Command::Select(id));
 }
 
+const LOG_LINES: usize = 2000;
+
+#[tauri::command]
+fn get_log(state: tauri::State<AppState>) -> Vec<Event> {
+    state.log.lock().unwrap().iter().cloned().collect()
+}
+
 #[tauri::command]
 fn set_paused(state: tauri::State<AppState>, paused: bool) {
     state.handle.send(Command::Pause(paused));
@@ -141,6 +151,19 @@ fn frontend_ready(app: AppHandle) {
                             let body = format!("{} {}", claim.game, claim.rewards);
                             let _ = app.notification().builder().title(title).body(body).show();
                         }
+                    }
+                    let entry = match &ev {
+                        Event::Print(msg) => Some(Event::log("INFO", msg.clone())),
+                        Event::Log { .. } => Some(ev.clone()),
+                        _ => None,
+                    };
+                    if let Some(entry) = entry {
+                        let state = app.state::<AppState>();
+                        let mut log = state.log.lock().unwrap();
+                        if log.len() == LOG_LINES {
+                            log.pop_front();
+                        }
+                        log.push_back(entry);
                     }
                     if let Event::Paused(p) = ev {
                         app.state::<AppState>().paused.store(p, Ordering::Relaxed);
@@ -195,7 +218,7 @@ fn main() {
         eprintln!("settings: {e}");
         Settings::default()
     });
-    rustpick::init_logging(0, false).ok();
+
     let lock = rustpick::lock::SingleInstance::acquire(&rustpick::settings::data_dir().join("lock.file"));
     if let Err(e) = lock {
         eprintln!("Another instance appears to be running or the lock file is unwritable ({e}). Exiting.");
@@ -203,6 +226,7 @@ fn main() {
     }
     rustpick::translate::init(&settings.language);
     let (events, _) = broadcast::channel::<Event>(1024);
+    rustpick::init_logging(0, false, Some(events.clone())).ok();
     let (miner, handle) = Miner::new(settings.clone(), events.clone(), false).expect("miner");
 
     tauri::Builder::default()
@@ -214,6 +238,7 @@ fn main() {
             settings: Mutex::new(settings),
             miner: Mutex::new(Some(miner)),
             events,
+            log: Mutex::new(VecDeque::new()),
             paused: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
@@ -226,6 +251,7 @@ fn main() {
             reload,
             select,
             set_paused,
+            get_log,
             shutdown,
             open_url,
             copy_text,

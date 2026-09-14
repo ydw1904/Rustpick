@@ -256,6 +256,41 @@ impl Http {
         }
     }
 
+    /// Ask Twitch whether `token` is valid for our client: Some(user_id), or None if rejected.
+    async fn check_token(&self, token: &str) -> Result<Option<u64>> {
+        let resp = self
+            .send(self.client.get("https://id.twitch.tv/oauth2/validate").header("Authorization", format!("OAuth {token}")))
+            .await?;
+        match resp.status().as_u16() {
+            401 => {
+                tracing::info!("Stored token is invalid");
+                Ok(None)
+            }
+            200 => {
+                let v: Value = resp.json().await?;
+                if v.get("client_id").and_then(Value::as_str) != Some(self.info.id) {
+                    tracing::info!("Token client ID mismatch, logging in again");
+                    return Ok(None);
+                }
+                let uid = v
+                    .get("user_id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| anyhow!("validate response lacks user_id"))?;
+                Ok(Some(uid))
+            }
+            s => bail!("Unexpected status {s} while validating the token"),
+        }
+    }
+
+    /// Validate the saved token without ever starting a device-code login (for `rustpick check`).
+    pub async fn validate_saved(&self) -> Result<u64> {
+        let token = self.token.lock().unwrap().clone().ok_or_else(|| anyhow!("not logged in (no saved token)"))?;
+        let uid = self.check_token(&token).await?.ok_or_else(|| anyhow!("the saved token was rejected, log in again"))?;
+        let _ = self.user_id.set(uid);
+        Ok(uid)
+    }
+
     /// Restore the saved token or run the device-code flow, then validate it.
     pub async fn login(&self) -> Result<()> {
         let _ = self.events.send(Event::Status(t!["gui", "login", "logging_in"].into()));
@@ -269,39 +304,18 @@ impl Http {
                     t
                 }
             };
-            let resp = self
-                .send(
-                    self.client
-                        .get("https://id.twitch.tv/oauth2/validate")
-                        .header("Authorization", format!("OAuth {token}")),
-                )
-                .await?;
-            match resp.status().as_u16() {
-                401 => {
-                    tracing::info!("Stored token is invalid");
-                    *self.token.lock().unwrap() = None;
-                    let _ = self.events.send(Event::LoginRequired);
-                }
-                200 => {
-                    let v: Value = resp.json().await?;
-                    if v.get("client_id").and_then(Value::as_str) != Some(self.info.id) {
-                        tracing::info!("Token client ID mismatch, logging in again");
-                        *self.token.lock().unwrap() = None;
-                        let _ = self.events.send(Event::LoginRequired);
-                        continue;
-                    }
-                    let uid: u64 = v
-                        .get("user_id")
-                        .and_then(Value::as_str)
-                        .and_then(|s| s.parse().ok())
-                        .ok_or_else(|| anyhow!("validate response lacks user_id"))?;
+            match self.check_token(&token).await? {
+                Some(uid) => {
                     let _ = self.user_id.set(uid);
                     self.save_auth()?;
                     tracing::info!("Login successful, user ID: {uid}");
                     let _ = self.events.send(Event::LoggedIn { user_id: uid });
                     return Ok(());
                 }
-                s => bail!("Unexpected status {s} while validating the token"),
+                None => {
+                    *self.token.lock().unwrap() = None;
+                    let _ = self.events.send(Event::LoginRequired);
+                }
             }
         }
         bail!("Login verification failure")

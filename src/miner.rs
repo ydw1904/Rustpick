@@ -84,6 +84,8 @@ pub struct Miner {
     outside_hours: bool,
     /// Campaign IDs already announced via `Event::UnlinkedCampaign`.
     announced_unlinked: HashSet<String>,
+    /// The channel the previous run was watching (id, login, acl_based), tried once before discovery.
+    resume: Option<(u64, String, bool)>,
 }
 
 impl Miner {
@@ -118,6 +120,8 @@ impl Miner {
             notify_url,
             outside_hours: false,
             announced_unlinked: HashSet::new(),
+            // ponytail: fixed 3h freshness window for resuming; make it a setting if anyone asks
+            resume: if dump { None } else { crate::status::last_channel(ChronoDuration::hours(3)) },
         };
         Ok((miner, MinerHandle { tx }))
     }
@@ -126,6 +130,9 @@ impl Miner {
     pub async fn run(mut self) -> Result<()> {
         let notifier = crate::notify::spawn(self.events.subscribe(), self.notify_url.subscribe());
         let status = crate::status::spawn(self.events.subscribe());
+        if self.settings.check_updates && !self.dump {
+            self.tasks.push(tokio::spawn(crate::update::run(self.events.clone())).abort_handle());
+        }
         let hours_tx = self.tx.clone();
         self.tasks.push(
             tokio::spawn(async move {
@@ -308,6 +315,7 @@ impl Miner {
     fn channel_view(&self, c: &Channel) -> ChannelView {
         ChannelView {
             id: c.id,
+            login: c.login.clone(),
             name: c.name().to_owned(),
             url: c.url(self.http.info.url),
             acl_based: c.acl_based,
@@ -1027,6 +1035,7 @@ impl Miner {
 
     async fn channels_fetch(&mut self) -> Result<()> {
         self.status(t!["gui", "status", "gathering"]);
+        self.try_resume().await;
         let badges = self.badges_ok();
         let next_hour = Utc::now() + ChronoDuration::hours(1);
         let mut new_channels: Vec<Channel> = std::mem::take(&mut self.channels);
@@ -1105,6 +1114,23 @@ impl Miner {
         self.emit_channels();
         self.change_state(State::ChannelSwitch);
         Ok(())
+    }
+
+    /// Watch last run's channel right away if it still qualifies, instead of after full discovery.
+    async fn try_resume(&mut self) {
+        let Some((id, login, acl_based)) = self.resume.take() else { return };
+        if self.channel(id).is_some() {
+            return;
+        }
+        self.channels.push(Channel { id, login, display_name: None, acl_based, stream: None, pending: None });
+        if let Err(e) = self.update_stream(id).await {
+            tracing::info!("Resuming the last channel failed: {e:#}");
+        }
+        if self.watching == Some(id) {
+            tracing::info!("Resumed the last watched channel while discovery runs");
+        } else {
+            self.channels.retain(|c| c.id != id);
+        }
     }
 
     fn channel_switch(&mut self) {

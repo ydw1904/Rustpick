@@ -34,7 +34,12 @@ enum Cmd {
         /// If a login is needed, print the activation URL and code, then exit with code 4
         #[arg(long)]
         no_interactive_login: bool,
+        /// Serve Prometheus metrics on this address, e.g. 127.0.0.1:9184
+        #[arg(long)]
+        metrics: Option<std::net::SocketAddr>,
     },
+    /// Check proxy, login, GQL and PubSub connectivity; exits 1 if anything fails
+    Check,
     /// Print the settings file path and contents
     Show,
     /// Replace the game priority list (exact game names, highest priority first)
@@ -75,11 +80,22 @@ async fn main() -> Result<()> {
     if let Some(p) = &cli.profile {
         rustpick::settings::set_profile(p)?;
     }
-    rustpick::init_logging(cli.verbose, cli.log)?;
+    rustpick::init_logging(cli.verbose, cli.log, None)?;
     let mut settings = Settings::load()?;
     rustpick::translate::init(&settings.language);
-    match cli.cmd.unwrap_or(Cmd::Run { dump: false, no_interactive_login: false }) {
-        Cmd::Run { dump, no_interactive_login } => return run(settings, dump, no_interactive_login).await,
+    match cli.cmd.unwrap_or(Cmd::Run { dump: false, no_interactive_login: false, metrics: None }) {
+        Cmd::Run { dump, no_interactive_login, metrics } => {
+            if let Some(addr) = metrics {
+                let listener = tokio::spawn(rustpick::status::serve_metrics(addr));
+                tokio::spawn(async move {
+                    if let Ok(Err(e)) = listener.await {
+                        eprintln!("Metrics server on {addr} failed: {e}");
+                    }
+                });
+            }
+            return run(settings, dump, no_interactive_login).await;
+        }
+        Cmd::Check => return check(&settings).await,
         Cmd::Show => {
             println!("{}", Settings::path().display());
             println!("{}", serde_json::to_string_pretty(&settings)?);
@@ -171,6 +187,64 @@ fn import_tdm_login(path: &std::path::Path) -> Result<()> {
             println!("Imported the login session from {}", dir.join("cookies.jar").display());
         }
         None => println!("No usable cookies.jar found next to the settings (you'll need to log in)."),
+    }
+    Ok(())
+}
+
+/// One-shot connectivity diagnostic: a pass/fail line per layer, exit 1 on any failure.
+async fn check(settings: &Settings) -> Result<()> {
+    use std::time::Duration;
+    let limit = Duration::from_secs(10 * u64::from(settings.connection_quality) + 20);
+    let timed = |r: Result<Result<String>, tokio::time::error::Elapsed>| {
+        r.unwrap_or_else(|_| Err(anyhow!("timed out after {}s", limit.as_secs())))
+    };
+    let mut failed = false;
+    let mut report = |name: &str, r: Result<String>| {
+        match &r {
+            Ok(detail) => println!("{name:<8} OK    {detail}"),
+            Err(e) => println!("{name:<8} FAIL  {e:#}"),
+        }
+        failed |= r.is_err();
+        r.is_ok()
+    };
+    let proxy = if settings.proxy.is_empty() {
+        Ok("none configured".to_owned())
+    } else {
+        reqwest::Proxy::all(&settings.proxy).map(|_| settings.proxy.clone()).map_err(Into::into)
+    };
+    if !report("proxy", proxy) {
+        for name in ["auth", "gql", "pubsub"] {
+            report(name, Err(anyhow!("skipped, fix the proxy first")));
+        }
+        std::process::exit(1);
+    }
+    let (tx, _) = broadcast::channel(16);
+    let http = rustpick::http::Http::new(settings, tx)?;
+    let auth = timed(tokio::time::timeout(limit, async { Ok(format!("user ID {}", http.validate_saved().await?)) }).await);
+    let logged_in = report("auth", auth);
+    let gql = if logged_in {
+        timed(
+            tokio::time::timeout(limit, async {
+                let v = http.gql(rustpick::constants::gql::inventory()).await?;
+                let n = v.pointer("/data/currentUser/inventory/dropCampaignsInProgress").and_then(|c| c.as_array()).map_or(0, Vec::len);
+                Ok(format!("inventory query answered ({n} campaigns in progress)"))
+            })
+            .await,
+        )
+    } else {
+        Err(anyhow!("skipped, needs a valid login"))
+    };
+    report("gql", gql);
+    let pubsub = timed(
+        tokio::time::timeout(limit, async {
+            rustpick::websocket::check(&settings.proxy).await?;
+            Ok("connected, PING answered".to_owned())
+        })
+        .await,
+    );
+    report("pubsub", pubsub);
+    if failed {
+        std::process::exit(1);
     }
     Ok(())
 }
@@ -346,6 +420,8 @@ impl Printer {
             Event::Status(s) => tracing::info!("Status: {s}"),
             Event::LoginRequired => self.line("The saved Twitch login has expired."),
             Event::AllDone => self.line("All campaigns are done."),
+            Event::UpdateAvailable { version, url } => self.line(format!("Rustpick {version} is available: {url}")),
+            Event::Log { .. } => {} // already written by the tracing subscriber
             Event::Paused(p) => self.line(if p { "Paused." } else { "Resumed." }),
             Event::LoginCode { url, code } => self.line(format!(">>> Open {url} and enter the code: {code}")),
             Event::LoggedIn { user_id } => self.line(format!("Logged in (user ID {user_id})")),

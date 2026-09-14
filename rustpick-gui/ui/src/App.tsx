@@ -56,6 +56,7 @@ type PriorityMode = "priority_only" | "ending_soonest" | "low_avbl_first"
 
 interface Channel {
   id: number
+  login: string
   name: string
   url: string
   acl_based: boolean
@@ -120,11 +121,14 @@ interface Settings {
   tray_notifications: boolean
   autostart_tray: boolean
   notify_url: string
+  check_updates: boolean
   active_hours: [number, number] | null
 }
 
 type MinerEvent =
   | { kind: "Print"; data: string }
+  | { kind: "Log"; data: LogLine }
+  | { kind: "UpdateAvailable"; data: { version: string; url: string } }
   | { kind: "Status"; data: string }
   | { kind: "LoginCode"; data: { url: string; code: string } }
   | { kind: "LoggedIn"; data: { user_id: number } }
@@ -179,6 +183,37 @@ const CAMP_STATUS: Record<string, [string, string]> = {
   Active_false: ["Active, not linked", BAD],
   Upcoming: ["Upcoming", WARN],
   Expired: ["Expired", DIM],
+}
+
+interface LogLine { ts: string; level: string; msg: string }
+
+const LOG_LEVELS = ["ERROR", "WARN", "INFO"] as const
+const LOG_MAX = 2000
+type Sort = "ending" | "game" | "progress"
+const SORTS: [Sort, string][] = [["ending", "Ending soonest"], ["game", "Game name"], ["progress", "Progress"]]
+
+/** localStorage-backed state; falls back to `init` when storage is unavailable or holds junk. */
+function useStored<T extends object>(key: string, init: T) {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const raw = localStorage.getItem(key)
+      return raw ? { ...init, ...JSON.parse(raw) } : init
+    } catch {
+      return init
+    }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* private mode */ }
+  }, [key, value])
+  return [value, setValue] as const
+}
+
+/** "3d 4h", "2h 5m", "12m" until `iso`, or "ended". */
+const until = (iso: string) => {
+  const m = Math.floor((new Date(iso).getTime() - Date.now()) / 60000)
+  if (m <= 0) return "ended"
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60)
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`
 }
 
 interface Filters {
@@ -278,18 +313,28 @@ export default function App() {
   const [autostart, setAutostart] = useState<boolean | null>(null)
   const [languages, setLanguages] = useState<string[]>([])
   const [paused, setPaused] = useState(false)
-  const [filters, setFilters] = useState<Filters>({
+  const [filters, setFilters] = useStored<Filters>("inventory-filters", {
     notlinked: true, upcoming: true, expired: true, excluded: false, finished: true,
   })
+  const [inv, setInv] = useStored<{ search: string; sort: Sort }>("inventory-view", { search: "", sort: "ending" })
+  const [logs, setLogs] = useState<LogLine[]>([])
+  const [logView, setLogView] = useStored<{ level: string; search: string }>("log-view", { level: "INFO", search: "" })
+  const [release, setRelease] = useState<{ version: string; url: string } | null>(null)
   const [, setTick] = useState(0)
   const consoleRef = useRef<HTMLPreElement>(null)
   const stickRef = useRef(true)
   const selectedRef = useRef<number | null>(null)
   selectedRef.current = selected
 
+  const addLog = (line: LogLine) =>
+    setLogs((l) => (l.length >= LOG_MAX ? [...l.slice(l.length - LOG_MAX + 1), line] : [...l, line]))
+
   const handle = (ev: MinerEvent) => {
     switch (ev.kind) {
+      case "Log": addLog(ev.data); break
+      case "UpdateAvailable": setRelease(ev.data); break
       case "Print":
+        addLog({ ts: new Date().toISOString(), level: "INFO", msg: ev.data })
         setConsoleLines((l) => {
           const next = [...l, `${new Date().toLocaleTimeString()} ${ev.data}`]
           return next.length > 1000 ? next.slice(next.length - 1000) : next
@@ -320,6 +365,7 @@ export default function App() {
     })
     invoke<boolean>("get_autostart").then(setAutostart).catch(() => setAutostart(null))
     invoke<string[]>("list_languages").then(setLanguages).catch(() => setLanguages([]))
+    invoke<{ kind: "Log"; data: LogLine }[]>("get_log").then((l) => setLogs((cur) => [...(l ?? []).map((e) => e.data), ...cur])).catch(() => {})
     let un: (() => void) | undefined
     ;(async () => {
       un = await window.__TAURI__.event.listen("miner-event", (e) => handle(e.payload as MinerEvent))
@@ -397,8 +443,20 @@ export default function App() {
     if (c.status === "Expired" && !filters.expired) return false
     if (excluded && !filters.excluded) return false
     if (!c.eligible && !filters.notlinked) return false
+    const q = inv.search.trim().toLowerCase()
+    if (q && !c.game.toLowerCase().includes(q) && !c.name.toLowerCase().includes(q)) return false
     return true
-  })
+  }).sort((a, b) =>
+    inv.sort === "game" ? a.game.localeCompare(b.game)
+    : inv.sort === "progress" ? b.progress - a.progress
+    : new Date(a.ends_at).getTime() - new Date(b.ends_at).getTime(),
+  )
+
+  /* log filter: the selected level and everything more severe */
+  const logRank = (lvl: string) => { const i = LOG_LEVELS.indexOf(lvl as typeof LOG_LEVELS[number]); return i < 0 ? LOG_LEVELS.length : i }
+  const logQ = logView.search.trim().toLowerCase()
+  const visibleLogs = logs.filter((l) => logRank(l.level) <= logRank(logView.level) && (!logQ || l.msg.toLowerCase().includes(logQ)))
+  const logText = visibleLogs.map((l) => `${new Date(l.ts).toLocaleTimeString()} ${l.level.padEnd(5)} ${l.msg}`).join("\n")
 
   const statusCls = status.startsWith("Watching") ? OK : status === "Idle" || status === "Exited" ? DIM : WARN
   const wsSlots = Array.from({ length: WS_SLOTS }, (_, i) => i)
@@ -420,10 +478,20 @@ export default function App() {
         <TabsList className="ml-auto">
           <TabsTrigger value="main" className="px-3">Main</TabsTrigger>
           <TabsTrigger value="inventory" className="px-3">Inventory</TabsTrigger>
+          <TabsTrigger value="log" className="px-3">Log</TabsTrigger>
           <TabsTrigger value="settings" className="px-3">Settings</TabsTrigger>
           <TabsTrigger value="help" className="px-3">Help</TabsTrigger>
         </TabsList>
       </header>
+      {release && (
+        <div className="flex shrink-0 items-center gap-3 border-b bg-primary/10 px-4 py-1.5 text-sm">
+          <span>Rustpick {release.version} is available.</span>
+          <a className="cursor-pointer font-medium text-primary hover:underline" onClick={() => invoke("open_url", { url: release.url })}>
+            Release notes
+          </a>
+          <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setRelease(null)}>Dismiss</Button>
+        </div>
+      )}
       <datalist id="games-dl">
         {games.map((g) => <option key={g} value={g} />)}
       </datalist>
@@ -619,6 +687,18 @@ export default function App() {
               {label}
             </label>
           ))}
+          <Input
+            className="h-8 w-44"
+            placeholder="Search game or campaign"
+            value={inv.search}
+            onChange={(e) => setInv((v) => ({ ...v, search: e.target.value }))}
+          />
+          <Select items={Object.fromEntries(SORTS)} value={inv.sort} onValueChange={(v) => setInv((x) => ({ ...x, sort: v as Sort }))}>
+            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {SORTS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+            </SelectContent>
+          </Select>
           <Button size="sm" variant="outline" className="ml-auto" onClick={() => invoke("reload")}>
             <HugeiconsIcon icon={RefreshIcon} size={14} strokeWidth={2} data-icon="inline-start" />
             Refresh
@@ -652,7 +732,9 @@ export default function App() {
                       ) : null}
                     </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
-                      {c.status === "Upcoming" ? `Starts ${dt(c.starts_at)}` : `Ends ${dt(c.ends_at)}`}
+                      {c.status === "Upcoming"
+                        ? `Starts ${dt(c.starts_at)} (in ${until(c.starts_at)})`
+                        : c.status === "Expired" ? `Ended ${dt(c.ends_at)}` : `Ends in ${until(c.ends_at)} (${dt(c.ends_at)})`}
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       <Progress value={c.progress * 100} className="flex-1" />
@@ -753,6 +835,12 @@ export default function App() {
                   placeholder="http://host:port (needs restart)"
                   value={settings?.proxy ?? ""}
                   onChange={(e) => update({ proxy: e.target.value })}
+                />
+                <label htmlFor="s-updates">Check for updates</label>
+                <Checkbox
+                  id="s-updates"
+                  checked={!!settings?.check_updates}
+                  onCheckedChange={(checked) => update({ check_updates: !!checked })}
                 />
                 <label htmlFor="s-notify-url">Webhook URL</label>
                 <Input
@@ -928,6 +1016,45 @@ export default function App() {
           <Button variant="outline" size="sm" disabled={!dirty} onClick={saveSettings}>Save</Button>
           <Button size="sm" onClick={() => { saveSettings(); invoke("reload") }}>Save &amp; Reload</Button>
         </div>
+      </TabsContent>
+
+      {/* ===== LOG ===== */}
+      <TabsContent value="log" className="flex min-h-0 flex-col gap-3 p-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl bg-card px-3 py-2 ring-1 ring-foreground/10">
+          <span className="text-sm text-muted-foreground">Level</span>
+          <Select
+            items={{ ERROR: "Errors", WARN: "Warnings and errors", INFO: "Everything" }}
+            value={logView.level}
+            onValueChange={(v) => setLogView((x) => ({ ...x, level: v as string }))}
+          >
+            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ERROR">Errors</SelectItem>
+              <SelectItem value="WARN">Warnings and errors</SelectItem>
+              <SelectItem value="INFO">Everything</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            className="h-8 w-56"
+            placeholder="Search"
+            value={logView.search}
+            onChange={(e) => setLogView((x) => ({ ...x, search: e.target.value }))}
+          />
+          <span className="text-xs text-muted-foreground tabular-nums">{visibleLogs.length} lines</span>
+          <Button size="sm" variant="outline" className="ml-auto" disabled={!visibleLogs.length} onClick={() => invoke("copy_text", { text: logText })}>
+            <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={2} data-icon="inline-start" />
+            Copy
+          </Button>
+        </div>
+        <pre className="min-h-0 flex-1 overflow-auto rounded-xl border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+          {visibleLogs.length ? visibleLogs.map((l, i) => (
+            <div key={i} className={l.level === "ERROR" ? BAD : l.level === "WARN" ? WARN : undefined}>
+              <span className="text-muted-foreground">{new Date(l.ts).toLocaleTimeString()} </span>
+              <span className="inline-block w-12">{l.level}</span>
+              {l.msg}
+            </div>
+          )) : <span className="text-muted-foreground">No log lines match.</span>}
+        </pre>
       </TabsContent>
 
       {/* ===== HELP ===== */}
