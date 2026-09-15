@@ -149,6 +149,10 @@ pub struct Campaign {
     pub allowed_channels: Vec<AclChannel>,
     pub drops: Vec<TimedDrop>,
     pub has_badge_or_emote: bool,
+    /// Settings `linked_only` is off: earn even without a linked game account.
+    // ponytail: a setting stamped onto each campaign at load; thread a rules struct through
+    // can_earn if a second flag ever needs it.
+    pub mine_unlinked: bool,
 }
 
 impl Campaign {
@@ -198,6 +202,7 @@ impl Campaign {
             allowed_channels,
             drops,
             has_badge_or_emote,
+            mine_unlinked: false,
         })
     }
 
@@ -215,7 +220,7 @@ impl Campaign {
     }
 
     pub fn eligible(&self, badges_emotes_enabled: bool) -> bool {
-        if self.has_badge_or_emote { badges_emotes_enabled } else { !self.needs_link() }
+        if self.has_badge_or_emote { badges_emotes_enabled } else { self.mine_unlinked || !self.needs_link() }
     }
 
     /// Badge/emote campaigns don't need a linked account; everything else does.

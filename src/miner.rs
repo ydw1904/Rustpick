@@ -6,7 +6,7 @@ use crate::constants::{MAX_CHANNELS, ONLINE_DELAY, WATCH_INTERVAL, gql, topic};
 use crate::events::*;
 use crate::http::Http;
 use crate::inventory::Campaign;
-use crate::settings::{PriorityMode, Settings, data_dir};
+use crate::settings::{Order, Settings, data_dir};
 use crate::t;
 use crate::util::{json_str, json_u64, timestamp};
 use crate::websocket::WsPool;
@@ -986,15 +986,14 @@ impl Miner {
         let badges = self.badges_ok();
         let next_hour = Utc::now() + ChronoDuration::hours(1);
         let s = &self.settings;
-        let priority_only = s.priority_mode == PriorityMode::PriorityOnly;
         let mut order: Vec<usize> = (0..self.inventory.len()).collect();
-        match s.priority_mode {
-            PriorityMode::PriorityOnly => {}
-            PriorityMode::EndingSoonest => order.sort_by_key(|&i| self.inventory[i].ends_at),
-            PriorityMode::LowAvblFirst => {
+        match s.order {
+            Order::EndingSoonest => order.sort_by_key(|&i| self.inventory[i].ends_at),
+            Order::LowAvblFirst => {
                 order.sort_by(|&a, &b| self.inventory[a].availability().total_cmp(&self.inventory[b].availability()))
             }
         }
+        // White-listed games first (list order), then the rest by `order`
         order.sort_by_key(|&i| {
             s.priority
                 .iter()
@@ -1006,8 +1005,8 @@ impl Miner {
             let c = &self.inventory[i];
             let g = &c.game;
             if !wanted.contains(g)
-                && !s.exclude.contains(&g.name)
-                && (!priority_only || s.priority.contains(&g.name))
+                && !(s.blacklist && s.exclude.contains(&g.name))
+                && (!s.whitelist || s.priority.contains(&g.name))
                 && c.can_earn_within(next_hour, badges)
             {
                 wanted.push(g.clone());
@@ -1238,6 +1237,7 @@ impl Miner {
             self.write_dump(&inventory_data, inv.get("gameEventDrops").cloned().unwrap_or(Value::Null))?;
         }
         let badges = self.badges_ok();
+        let mine_unlinked = !self.settings.linked_only;
         let mut campaigns: Vec<Campaign> = inventory_data
             .values()
             .filter_map(|c| {
@@ -1245,7 +1245,10 @@ impl Miner {
                 if parsed.is_none() {
                     tracing::warn!("Skipping malformed campaign: {}", c["id"]);
                 }
-                parsed
+                parsed.map(|mut c| {
+                    c.mine_unlinked = mine_unlinked;
+                    c
+                })
             })
             .collect();
         campaigns.sort_by_key(|c| Reverse(c.active()));

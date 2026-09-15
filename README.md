@@ -85,7 +85,7 @@ npm run tauri build
 
 1. Open Rustpick.
 2. Follow the sign-in prompt and enter the shown code at `twitch.tv/activate`.
-3. Review your campaigns and choose White list or Black list mode.
+3. Review your campaigns and turn on the White list, the Black list, or neither to mine everything.
 4. Leave Rustpick running while it works. It can stay in the system tray.
 
 ### CLI
@@ -99,9 +99,12 @@ rustpick
 On first run, open the activation page shown in the terminal and enter the device code. Useful commands include:
 
 ```sh
-rustpick priority "Game A" "Game B"  # Highest priority first
-rustpick exclude "Game C"            # Ignore selected games
-rustpick mode ending-soonest          # Work on campaigns ending soonest
+rustpick priority "Game A" "Game B"  # White list, highest priority first
+rustpick set whitelist true           # Mine only White-listed games
+rustpick exclude "Game C"            # Black list
+rustpick set blacklist true           # Never mine Black-listed games (default on)
+rustpick set linked-only false        # Also mine campaigns without a linked game account
+rustpick order ending-soonest         # Order for games the White list doesn't rank
 rustpick claims                       # Show claimed-drop history
 rustpick status                       # What the running miner is doing
 rustpick check                        # Test proxy, login, GQL and PubSub; exits 1 on failure
@@ -148,8 +151,8 @@ docker compose up -d && docker compose logs -f   # enter the shown code once
 
 See `docker-compose.yml`. Data lives in the `/data` volume, the health check fails when the miner
 stops updating `status.json`, and images are published to `ghcr.io/ydw1904/rustpick` on tags.
-Any of `RUSTPICK_PROXY`, `RUSTPICK_NOTIFY_URL`, `RUSTPICK_LANGUAGE`, `RUSTPICK_PRIORITY_MODE`,
-`RUSTPICK_CONNECTION_QUALITY`, `RUSTPICK_ACTIVE_HOURS` and the comma-separated
+Any of `RUSTPICK_PROXY`, `RUSTPICK_NOTIFY_URL`, `RUSTPICK_LANGUAGE`, `RUSTPICK_WHITELIST`, `RUSTPICK_BLACKLIST`,
+`RUSTPICK_LINKED_ONLY`, `RUSTPICK_ORDER`, `RUSTPICK_CONNECTION_QUALITY`, `RUSTPICK_ACTIVE_HOURS` and the comma-separated
 `RUSTPICK_PRIORITY` / `RUSTPICK_EXCLUDE` override `settings.json` (and get saved into it).
 
 ## Current status
@@ -159,7 +162,7 @@ Rustpick is an early port. The following pieces are implemented:
 - Device-code login, inventory and campaign loading, eligibility checks, and claiming
 - Channel discovery and automatic switching when streams change
 - Drop progress tracking with fallback checks
-- Toggleable White list and Black list modes with multiple ordering options
+- Independent White list and Black list toggles, a linked-accounts-only switch, and two mining orders
 - Desktop, tray, autostart, notifications, and a headless CLI
 - Translated core messages using TwitchDropsMiner language files
 

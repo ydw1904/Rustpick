@@ -58,7 +58,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 type ChannelStatus = "Online" | "Pending" | "Offline"
 type CampaignStatus = "Active" | "Upcoming" | "Expired"
-type PriorityMode = "priority_only" | "ending_soonest" | "low_avbl_first"
+type Order = "ending_soonest" | "low_avbl_first"
 
 interface Channel {
   id: number
@@ -125,7 +125,10 @@ interface Settings {
   proxy: string
   priority: string[]
   exclude: string[]
-  priority_mode: PriorityMode
+  whitelist: boolean
+  blacklist: boolean
+  linked_only: boolean
+  order: Order
   connection_quality: number
   enable_badges_emotes: boolean
   available_drops_check: boolean
@@ -174,10 +177,31 @@ function HourSelect({ value, onChange }: { value: number; onChange: (h: number) 
 
 const WS_MAX_TOPICS = 50
 const WS_SLOTS = 8
-const BLACKLIST_ORDERS: [Exclude<PriorityMode, "priority_only">, string][] = [
+const ORDERS: [Order, string][] = [
   ["ending_soonest", "Ending soonest first"],
   ["low_avbl_first", "Low availability first"],
 ]
+
+function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-label={label}
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "relative h-5 w-9 shrink-0 rounded-full outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+        checked ? "bg-primary" : "bg-muted-foreground/40",
+      )}
+    >
+      <span className={cn(
+        "absolute top-0.5 left-0.5 size-4 rounded-full bg-background shadow-sm transition-transform",
+        checked && "translate-x-4",
+      )} />
+    </button>
+  )
+}
 const FILTERS: [keyof Filters, string][] = [
   ["notlinked", "Not linked"],
   ["upcoming", "Upcoming"],
@@ -433,7 +457,6 @@ export default function App() {
   }, [consoleLines])
 
   const dirty = settings != null && JSON.stringify(settings) !== saved
-  const blacklistMode = settings != null && settings.priority_mode !== "priority_only"
   const update = (patch: Partial<Settings>) => setSettings((s) => (s ? { ...s, ...patch } : s))
   const saveSettings = () => {
     if (!settings) return
@@ -456,13 +479,13 @@ export default function App() {
 
   /* inventory filter */
   const visibleCampaigns = inventory.filter((c) => {
-    const blacklisted = settings ? settings.exclude.includes(c.game) : false
+    const blacklisted = settings != null && settings.blacklist && settings.exclude.includes(c.game)
     const finished = c.total > 0 && c.claimed >= c.total
     if (finished && !filters.finished) return false
     if (c.status === "Upcoming" && !filters.upcoming) return false
     if (c.status === "Expired" && !filters.expired) return false
     if (blacklisted && !filters.excluded) return false
-    if (!c.eligible && !filters.notlinked) return false
+    if (c.needs_link && !filters.notlinked) return false
     const q = inv.search.trim().toLowerCase()
     if (q && !c.game.toLowerCase().includes(q) && !c.name.toLowerCase().includes(q)) return false
     return true
@@ -733,7 +756,7 @@ export default function App() {
           </div>
         </div>
         {visibleCampaigns.map((c) => {
-          const [label, cls] = CAMP_STATUS[c.status === "Active" ? `Active_${c.eligible}` : c.status] ?? ["", DIM]
+          const [label, cls] = CAMP_STATUS[c.status === "Active" ? `Active_${!c.needs_link}` : c.status] ?? ["", DIM]
           return (
             <Card key={c.id} size="sm" className="shrink-0">
               <CardContent className="flex flex-col gap-4 md:flex-row">
@@ -879,38 +902,23 @@ export default function App() {
                     {languages.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <span>Mining list</span>
-                <div className="flex items-center gap-2 text-xs font-medium">
-                  <span className={cn(!blacklistMode ? "text-foreground" : "text-muted-foreground")}>White list</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-label="Use Black list mode"
-                    aria-checked={blacklistMode}
-                    onClick={() => update({ priority_mode: blacklistMode ? "priority_only" : "ending_soonest" })}
-                    className={cn(
-                      "relative h-5 w-9 shrink-0 rounded-full outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                      blacklistMode ? "bg-primary" : "bg-muted-foreground/40",
-                    )}
-                  >
-                    <span className={cn(
-                      "absolute top-0.5 left-0.5 size-4 rounded-full bg-background shadow-sm transition-transform",
-                      blacklistMode && "translate-x-4",
-                    )} />
-                  </button>
-                  <span className={cn(blacklistMode ? "text-foreground" : "text-muted-foreground")}>Black list</span>
-                </div>
-                {blacklistMode && (
+                <label htmlFor="s-linked-only">Linked accounts only</label>
+                <Checkbox
+                  id="s-linked-only"
+                  checked={!!settings?.linked_only}
+                  onCheckedChange={(checked) => update({ linked_only: !!checked })}
+                />
+                {!settings?.whitelist && (
                   <>
                     <label>Mining order</label>
                     <Select
-                      items={Object.fromEntries(BLACKLIST_ORDERS)}
-                      value={settings?.priority_mode}
-                      onValueChange={(v) => update({ priority_mode: v as PriorityMode })}
+                      items={Object.fromEntries(ORDERS)}
+                      value={settings?.order}
+                      onValueChange={(v) => update({ order: v as Order })}
                     >
                       <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {BLACKLIST_ORDERS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+                        {ORDERS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </>
@@ -1017,7 +1025,14 @@ export default function App() {
           <Card size="sm">
             <CardHeader>
               <CardTitle className="text-lg! font-semibold">White list</CardTitle>
-              <CardDescription>Mine only these games in White list mode; prefer them in Black list mode.</CardDescription>
+              <CardDescription>
+                {settings?.whitelist
+                  ? "Only these games are mined, top to bottom."
+                  : "Off: these games are mined first, then everything else by the mining order."}
+              </CardDescription>
+              <CardAction>
+                <Switch label="Mine only White-listed games" checked={!!settings?.whitelist} onChange={(v) => update({ whitelist: v })} />
+              </CardAction>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               <div className="flex gap-2">
@@ -1054,7 +1069,12 @@ export default function App() {
           <Card size="sm">
             <CardHeader>
               <CardTitle className="text-lg! font-semibold">Black list</CardTitle>
-              <CardDescription>Games that are never mined.</CardDescription>
+              <CardDescription>
+                {settings?.blacklist ? "These games are never mined." : "Off: these games are mined like any other."}
+              </CardDescription>
+              <CardAction>
+                <Switch label="Skip Black-listed games" checked={!!settings?.blacklist} onChange={(v) => update({ blacklist: v })} />
+              </CardAction>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               <div className="flex gap-2">
@@ -1161,7 +1181,7 @@ export default function App() {
             <ul>
               <li><b>Main</b>: login, live status, websocket health, mining progress, output log, and the channel list. Click a channel and press <b>Switch</b> to pin it; press Esc to unpin.</li>
               <li><b>Inventory</b>: every campaign and its drops, with progress and account-link status. Use the filters to hide categories.</li>
-              <li><b>Settings</b>: White list and Black list modes, mining order, and connection options. Most changes apply on the next reload.</li>
+              <li><b>Settings</b>: White list and Black list toggles, mining order, linked-accounts-only, and connection options. Most changes apply on the next reload.</li>
             </ul>
             <h4>Login</h4>
             <p>Device-code only: open the shown link, enter the code on Twitch, and approve. No password is ever entered here.</p>
@@ -1169,8 +1189,10 @@ export default function App() {
             <p>With <i>Autostart in tray</i> enabled, Rustpick starts hidden and closing its window keeps it running. Normal launches keep the Dock icon and exit when closed.</p>
             <h4>Game lists</h4>
             <ul>
-              <li><b>White list</b>: mine only listed games, from top to bottom.</li>
-              <li><b>Black list</b>: mine any eligible game except those listed. White-listed games still come first, then the selected mining order applies.</li>
+              <li><b>White list</b> on: mine only listed games, from top to bottom. Off: listed games still go first, then the rest follow the mining order.</li>
+              <li><b>Black list</b> on: listed games are never mined. Off: the list is ignored.</li>
+              <li>Both off: everything eligible is mined. Both on: only White-listed games that aren't Black-listed.</li>
+              <li><b>Linked accounts only</b>: skip campaigns whose game account isn't linked yet. Turn it off to watch them anyway and link later.</li>
             </ul>
             <p className="text-muted-foreground">
               Files (settings.json, auth.json, log.txt) live in the working directory, or in $RUSTPICK_DIR.

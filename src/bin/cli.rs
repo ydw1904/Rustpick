@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use rustpick::events::{CampaignStatus, ChannelStatus, Claim};
-use rustpick::settings::{PriorityMode, Theme, data_dir};
+use rustpick::settings::{Order, Theme, data_dir};
 use rustpick::{Command, Event, Miner, Settings};
 use std::collections::BTreeSet;
 use tokio::sync::broadcast;
@@ -42,13 +42,13 @@ enum Cmd {
     Check,
     /// Print the settings file path and contents
     Show,
-    /// Replace the game priority list (exact game names, highest priority first)
+    /// Replace the White list (exact game names, highest priority first)
     Priority { games: Vec<String> },
-    /// Replace the excluded games list
+    /// Replace the Black list
     Exclude { games: Vec<String> },
-    /// Priority mode: priority-only | ending-soonest | low-avbl-first
-    Mode { mode: String },
-    /// Toggle a flag: badges-emotes | drops-check | dark-mode
+    /// Mining order for games the White list doesn't rank: ending-soonest | low-avbl-first
+    Order { order: String },
+    /// Toggle a flag: whitelist | blacklist | linked-only | badges-emotes | drops-check | dark-mode
     Set { key: String, value: bool },
     /// Set the webhook URL for notifications (claims, login needed, all done); "" turns it off
     NotifyUrl { url: String },
@@ -116,11 +116,13 @@ async fn main() -> Result<()> {
         }
         Cmd::Priority { games } => settings.priority = games,
         Cmd::Exclude { games } => settings.exclude = games.into_iter().collect(),
-        Cmd::Mode { mode } => {
-            settings.priority_mode =
-                PriorityMode::parse(&mode).ok_or_else(|| anyhow!("unknown mode '{mode}'"))?;
+        Cmd::Order { order } => {
+            settings.order = Order::parse(&order).ok_or_else(|| anyhow!("unknown order '{order}'"))?;
         }
         Cmd::Set { key, value } => match key.as_str() {
+            "whitelist" => settings.whitelist = value,
+            "blacklist" => settings.blacklist = value,
+            "linked-only" => settings.linked_only = value,
             "badges-emotes" => settings.enable_badges_emotes = value,
             "drops-check" => settings.available_drops_check = value,
             "dark-mode" => {

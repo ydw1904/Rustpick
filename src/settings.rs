@@ -5,30 +5,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+/// Mining order for games the White list doesn't rank.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum PriorityMode {
+pub enum Order {
     #[default]
-    PriorityOnly,
     EndingSoonest,
     LowAvblFirst,
 }
 
-impl PriorityMode {
-    pub const ALL: [PriorityMode; 3] =
-        [Self::PriorityOnly, Self::EndingSoonest, Self::LowAvblFirst];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::PriorityOnly => "Priority list only",
-            Self::EndingSoonest => "Ending soonest first",
-            Self::LowAvblFirst => "Low availability first",
-        }
-    }
-
+impl Order {
     pub fn parse(s: &str) -> Option<Self> {
         match s.replace('-', "_").as_str() {
-            "priority_only" => Some(Self::PriorityOnly),
             "ending_soonest" => Some(Self::EndingSoonest),
             "low_avbl_first" => Some(Self::LowAvblFirst),
             _ => None,
@@ -86,9 +74,19 @@ fn de_theme<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Theme, D::Error> {
 pub struct Settings {
     /// HTTP proxy URL; empty for none. Also tunnels the PubSub websocket (CONNECT).
     pub proxy: String,
+    /// White list: with `whitelist` on, only these games are mined, top to bottom.
+    /// Off, they are still mined first, then everything else by `order`.
     pub priority: Vec<String>,
+    /// Black list: with `blacklist` on, these games are never mined.
     pub exclude: BTreeSet<String>,
-    pub priority_mode: PriorityMode,
+    pub whitelist: bool,
+    pub blacklist: bool,
+    /// Skip campaigns whose game account isn't linked yet.
+    pub linked_only: bool,
+    pub order: Order,
+    /// Pre-toggle `priority_mode`; migrated by `load()` and never written back.
+    #[serde(default, skip_serializing)]
+    priority_mode: Option<String>,
     /// 1..=6, multiplies request timeouts.
     pub connection_quality: u32,
     pub enable_badges_emotes: bool,
@@ -116,7 +114,11 @@ impl Default for Settings {
             proxy: String::new(),
             priority: Vec::new(),
             exclude: BTreeSet::new(),
-            priority_mode: PriorityMode::PriorityOnly,
+            whitelist: false,
+            blacklist: true,
+            linked_only: true,
+            order: Order::EndingSoonest,
+            priority_mode: None,
             connection_quality: 1,
             enable_badges_emotes: false,
             available_drops_check: false,
@@ -219,9 +221,22 @@ impl Settings {
         } else {
             Self::default() // env overrides still apply, e.g. a fresh container volume
         };
+        if let Some(m) = s.priority_mode.take() {
+            s.legacy_mode(&m);
+        }
         s.apply_env()?;
         s.connection_quality = s.connection_quality.clamp(1, 6);
         Ok(s)
+    }
+
+    /// Map the old single `priority_mode` onto the toggles: `priority_only` was the White
+    /// list; the two orders were Black list mode. The Black list always applied back then.
+    fn legacy_mode(&mut self, mode: &str) {
+        self.whitelist = mode.replace('-', "_") == "priority_only";
+        self.blacklist = true;
+        if let Some(o) = Order::parse(mode) {
+            self.order = o;
+        }
     }
 
     /// `RUSTPICK_<FIELD>` environment overrides (for containers); lists are comma-separated.
@@ -247,7 +262,15 @@ impl Settings {
             self.exclude = list(v);
         }
         if let Some(v) = var("PRIORITY_MODE") {
-            self.priority_mode = PriorityMode::parse(&v).with_context(|| format!("RUSTPICK_PRIORITY_MODE={v}"))?;
+            self.legacy_mode(&v);
+        }
+        if let Some(v) = var("ORDER") {
+            self.order = Order::parse(&v).with_context(|| format!("RUSTPICK_ORDER={v}"))?;
+        }
+        for (k, field) in [("WHITELIST", &mut self.whitelist), ("BLACKLIST", &mut self.blacklist), ("LINKED_ONLY", &mut self.linked_only)] {
+            if let Some(v) = var(k) {
+                *field = v.parse().with_context(|| format!("RUSTPICK_{k}={v}"))?;
+            }
         }
         if let Some(v) = var("ACTIVE_HOURS") {
             self.active_hours = match v.as_str() {
@@ -286,11 +309,11 @@ impl Settings {
             s.connection_quality = (n as u32).clamp(1, 6);
         }
         if let Some(m) = tdm_data(&v, "priority_mode").and_then(|x| x.as_u64()) {
-            s.priority_mode = match m {
-                1 => PriorityMode::EndingSoonest,
-                2 => PriorityMode::LowAvblFirst,
-                _ => PriorityMode::PriorityOnly,
-            };
+            s.legacy_mode(match m {
+                1 => "ending_soonest",
+                2 => "low_avbl_first",
+                _ => "priority_only",
+            });
         }
         if let Some(b) = tdm_data(&v, "dark_mode").and_then(|x| x.as_bool()) {
             // TDM's toggle was light/dark only; false means light.
@@ -355,13 +378,26 @@ mod tests {
         assert_eq!(s.proxy, "http://user:pass@host:8080");
         assert_eq!(s.priority, vec!["Game A", "Game B"]);
         assert!(s.exclude.contains("Game C"));
-        assert_eq!(s.priority_mode, PriorityMode::LowAvblFirst);
+        assert!(!s.whitelist && s.blacklist);
+        assert_eq!(s.order, Order::LowAvblFirst);
         assert_eq!(s.connection_quality, 6); // clamped from 9
         assert_eq!(s.theme, Theme::Dark);
         assert!(s.enable_badges_emotes);
         assert!(s.autostart_tray);
         assert!(s.tray_notifications); // absent from the file, keeps the default
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn legacy_priority_mode_maps_to_toggles() {
+        let mut s: Settings = serde_json::from_str(r#"{"priority_mode": "priority_only"}"#).unwrap();
+        let m = s.priority_mode.take().unwrap();
+        s.legacy_mode(&m);
+        assert!(s.whitelist && s.blacklist);
+        s.legacy_mode("low-avbl-first");
+        assert!(!s.whitelist && s.blacklist);
+        assert_eq!(s.order, Order::LowAvblFirst);
+        assert!(!serde_json::to_string(&s).unwrap().contains("priority_mode"));
     }
 
     #[test]
