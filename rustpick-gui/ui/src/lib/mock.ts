@@ -32,8 +32,10 @@ const channels = [
   id: i + 1, name, url: `https://twitch.tv/${name}`, acl_based, status, game, drops_enabled, viewers,
 }))
 
+const rewardImage = "https://static-cdn.jtvnw.net/twitch-quests-assets/REWARD/e0ede26e-b071-47f0-af5f-b80b26fa9fb4.png"
 const drop = (id: string, name: string, rewards: string, cur: number, req: number, claimed = false) => ({
-  id, name, rewards, current_minutes: cur, required_minutes: req, is_claimed: claimed, progress: cur / req,
+  id, name, rewards, benefits: [{ id: `${id}-reward`, name: rewards, image_url: rewardImage }],
+  current_minutes: cur, required_minutes: req, is_claimed: claimed, progress: cur / req,
 })
 const now = Date.now()
 const iso = (h: number) => new Date(now + h * 3600_000).toISOString()

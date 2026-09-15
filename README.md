@@ -17,7 +17,7 @@ Rustpick keeps track of your eligible Twitch Drops campaigns, watches matching c
 
 It is a Rust port of [TwitchDropsMiner](https://github.com/DevilXD/TwitchDropsMiner) with a shared mining engine and two ways to use it:
 
-- **Desktop app:** a visual interface for campaigns, progress, priorities, settings, and tray operation
+- **Desktop app:** a visual interface for campaigns, progress, White list and Black list filtering, settings, and tray operation
 - **CLI:** a lightweight headless option for terminals, servers, and automation
 
 Rustpick can switch channels when a stream goes offline or a higher-priority game becomes available. Sign-in uses Twitch's device-code page, so Rustpick never asks for your Twitch password.
@@ -27,7 +27,7 @@ Rustpick can switch channels when a stream goes offline or a higher-priority gam
 - Earn eligible Drops while Rustpick runs unattended
 - Avoid streaming video just to make campaign progress
 - See campaigns and progress in one place
-- Prioritize games, exclude campaigns you do not want, and choose how work is ordered
+- Switch between a White list of games to mine and a Black list of games to skip
 - Run either a desktop app or a headless CLI backed by the same core
 - Import settings and an existing login session from TwitchDropsMiner
 
@@ -85,7 +85,7 @@ npm run tauri build
 
 1. Open Rustpick.
 2. Follow the sign-in prompt and enter the shown code at `twitch.tv/activate`.
-3. Review your campaigns and choose any game priorities or exclusions.
+3. Review your campaigns and choose White list or Black list mode.
 4. Leave Rustpick running while it works. It can stay in the system tray.
 
 ### CLI
@@ -159,7 +159,7 @@ Rustpick is an early port. The following pieces are implemented:
 - Device-code login, inventory and campaign loading, eligibility checks, and claiming
 - Channel discovery and automatic switching when streams change
 - Drop progress tracking with fallback checks
-- Priority and exclusion lists with multiple ordering modes
+- Toggleable White list and Black list modes with multiple ordering options
 - Desktop, tray, autostart, notifications, and a headless CLI
 - Translated core messages using TwitchDropsMiner language files
 

@@ -84,10 +84,18 @@ pub enum CampaignStatus {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct BenefitView {
+    pub id: String,
+    pub name: String,
+    pub image_url: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct DropView {
     pub id: String,
     pub name: String,
     pub rewards: String,
+    pub benefits: Vec<BenefitView>,
     pub current_minutes: u32,
     pub required_minutes: u32,
     pub is_claimed: bool,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Add01Icon,
@@ -72,10 +72,17 @@ interface Channel {
   viewers: number | null
 }
 
+interface Benefit {
+  id: string
+  name: string
+  image_url: string
+}
+
 interface Drop {
   id: string
   name: string
   rewards: string
+  benefits: Benefit[]
   current_minutes: number
   required_minutes: number
   is_claimed: boolean
@@ -167,8 +174,7 @@ function HourSelect({ value, onChange }: { value: number; onChange: (h: number) 
 
 const WS_MAX_TOPICS = 50
 const WS_SLOTS = 8
-const MODES: [PriorityMode, string][] = [
-  ["priority_only", "Priority list only"],
+const BLACKLIST_ORDERS: [Exclude<PriorityMode, "priority_only">, string][] = [
   ["ending_soonest", "Ending soonest first"],
   ["low_avbl_first", "Low availability first"],
 ]
@@ -176,7 +182,7 @@ const FILTERS: [keyof Filters, string][] = [
   ["notlinked", "Not linked"],
   ["upcoming", "Upcoming"],
   ["expired", "Expired"],
-  ["excluded", "Excluded"],
+  ["excluded", "Blacklisted"],
   ["finished", "Finished"],
 ]
 const OK = "text-emerald-600 dark:text-emerald-400"
@@ -245,8 +251,19 @@ function Dot({ className }: { className?: string }) {
   return <span className={cn("inline-block size-1.5 shrink-0 rounded-full bg-current", className)} />
 }
 
+/** Live "h:mm:ss" that ticks on its own, so the rest of the page is not re-rendered every second. */
+function Countdown({ minutes, since, counting }: { minutes: number; since: number; counting: boolean }) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const [m, s] = countdownParts(minutes, (Date.now() - since) / 1000, counting)
+  return <>{fmt(m, s)}</>
+}
+
 function ProgressBlock({ label, title, value, detail, remaining }: {
-  label: string; title: string; value: number; detail: string; remaining: string
+  label: string; title: string; value: number; detail: string; remaining: ReactNode
 }) {
   return (
     <div>
@@ -266,7 +283,7 @@ function ProgressBlock({ label, title, value, detail, remaining }: {
   )
 }
 
-/** Selectable list used by the Priority and Exclude settings. */
+/** Selectable list used by the White list and Black list settings. */
 function GameList({ items, selected, onSelect, numbered }: {
   items: string[]; selected: number | null; onSelect: (i: number) => void; numbered?: boolean
 }) {
@@ -326,7 +343,6 @@ export default function App() {
   const [logs, setLogs] = useState<LogLine[]>([])
   const [logView, setLogView] = useStored<{ level: string; search: string }>("log-view", { level: "INFO", search: "" })
   const [release, setRelease] = useState<{ version: string; url: string } | null>(null)
-  const [, setTick] = useState(0)
   const consoleRef = useRef<HTMLPreElement>(null)
   const stickRef = useRef(true)
   const selectedRef = useRef<number | null>(null)
@@ -390,11 +406,6 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const t = setInterval(() => setTick((x) => x + 1), 1000)
-    return () => clearInterval(t)
-  }, [])
-
-  useEffect(() => {
     const theme = settings?.theme ?? "system"
     const mq = window.matchMedia("(prefers-color-scheme: dark)")
     const apply = () =>
@@ -422,6 +433,7 @@ export default function App() {
   }, [consoleLines])
 
   const dirty = settings != null && JSON.stringify(settings) !== saved
+  const blacklistMode = settings != null && settings.priority_mode !== "priority_only"
   const update = (patch: Partial<Settings>) => setSettings((s) => (s ? { ...s, ...patch } : s))
   const saveSettings = () => {
     if (!settings) return
@@ -442,22 +454,14 @@ export default function App() {
   }
   const games = [...new Set(inventory.map((c) => c.game))].sort()
 
-  /* progress countdown derivation */
-  let dropMin = 0, dropSecs = 0, campMin = 0, campSecs = 0
-  if (progress) {
-    const elapsed = (Date.now() - progressAt) / 1000
-    ;[dropMin, dropSecs] = countdownParts(progress.drop_required - progress.drop_current, elapsed, progress.countdown)
-    ;[campMin, campSecs] = countdownParts(progress.campaign_remaining_minutes, elapsed, progress.countdown)
-  }
-
   /* inventory filter */
   const visibleCampaigns = inventory.filter((c) => {
-    const excluded = settings ? settings.exclude.includes(c.game) : false
+    const blacklisted = settings ? settings.exclude.includes(c.game) : false
     const finished = c.total > 0 && c.claimed >= c.total
     if (finished && !filters.finished) return false
     if (c.status === "Upcoming" && !filters.upcoming) return false
     if (c.status === "Expired" && !filters.expired) return false
-    if (excluded && !filters.excluded) return false
+    if (blacklisted && !filters.excluded) return false
     if (!c.eligible && !filters.notlinked) return false
     const q = inv.search.trim().toLowerCase()
     if (q && !c.game.toLowerCase().includes(q) && !c.name.toLowerCase().includes(q)) return false
@@ -472,7 +476,7 @@ export default function App() {
   const logRank = (lvl: string) => { const i = LOG_LEVELS.indexOf(lvl as typeof LOG_LEVELS[number]); return i < 0 ? LOG_LEVELS.length : i }
   const logQ = logView.search.trim().toLowerCase()
   const visibleLogs = logs.filter((l) => logRank(l.level) <= logRank(logView.level) && (!logQ || l.msg.toLowerCase().includes(logQ)))
-  const logText = visibleLogs.map((l) => `${new Date(l.ts).toLocaleTimeString()} ${l.level.padEnd(5)} ${l.msg}`).join("\n")
+  const logText = () => visibleLogs.map((l) => `${new Date(l.ts).toLocaleTimeString()} ${l.level.padEnd(5)} ${l.msg}`).join("\n")
 
   const statusCls = status.startsWith("Watching") ? OK : status === "Idle" || status === "Exited" ? DIM : WARN
   const wsSlots = Array.from({ length: WS_SLOTS }, (_, i) => i)
@@ -487,7 +491,7 @@ export default function App() {
           <img src={logo} alt="Rustpick" className="h-8 w-auto shrink-0" />
           <span className="h-4 w-px bg-border" />
         </div>
-        <TabsList className="bg-card/70 shadow-sm ring-1 ring-foreground/10 backdrop-blur">
+        <TabsList className="bg-card/70 shadow-sm ring-1 ring-foreground/10">
           <TabsTrigger value="main" className="px-3">Main</TabsTrigger>
           <TabsTrigger value="inventory" className="px-3">Inventory</TabsTrigger>
           <TabsTrigger value="log" className="px-3">Log</TabsTrigger>
@@ -576,14 +580,14 @@ export default function App() {
                       title={progress.campaign_name}
                       value={progress.campaign_progress}
                       detail={`${progress.campaign_claimed}/${progress.campaign_total} drops claimed`}
-                      remaining={fmt(campMin, campSecs)}
+                      remaining={<Countdown minutes={progress.campaign_remaining_minutes} since={progressAt} counting={progress.countdown} />}
                     />
                     <ProgressBlock
                       label="Current drop"
                       title={progress.drop_rewards}
                       value={progress.drop_progress}
                       detail={`${progress.drop_current}/${progress.drop_required} min`}
-                      remaining={fmt(dropMin, dropSecs)}
+                      remaining={<Countdown minutes={progress.drop_required - progress.drop_current} since={progressAt} counting={progress.countdown} />}
                     />
                   </div>
                 ) : (
@@ -736,7 +740,7 @@ export default function App() {
                 <div className="flex w-full shrink-0 gap-3 md:w-80">
                   <div className="flex h-24 w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground/50">
                     {c.image_url ? (
-                      <img src={c.image_url} alt="" className="size-full object-cover" onError={(e) => (e.currentTarget.style.display = "none")} />
+                      <img src={c.image_url} alt="" loading="lazy" decoding="async" className="size-full object-cover" onError={(e) => (e.currentTarget.style.display = "none")} />
                     ) : (
                       <HugeiconsIcon icon={Image01Icon} size={20} strokeWidth={1.5} />
                     )}
@@ -766,17 +770,31 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-1 flex-wrap content-start gap-2">
+                <div className="flex w-full min-w-0 flex-1 gap-2 overflow-x-auto pb-2">
                   {c.drops.map((d) => (
                     <div
                       key={d.id}
                       title={`${d.name}: ${d.rewards}`}
                       className={cn(
-                        "flex h-24 w-[132px] flex-col justify-between gap-2 rounded-lg border bg-muted/30 p-2.5 text-xs",
+                        "flex min-h-36 min-w-[132px] shrink-0 flex-col justify-between gap-2 rounded-lg border bg-muted/30 p-2.5 text-xs",
                         d.is_claimed && "border-emerald-500/30 bg-emerald-500/5",
                       )}
                     >
-                      <div className="line-clamp-2 leading-snug font-medium">{d.rewards || d.name}</div>
+                      <div className="flex min-h-0 flex-1 gap-1.5">
+                        {d.benefits.map((b) => (
+                          <div key={b.id} className="flex w-24 flex-col items-center gap-1 text-center">
+                            <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded bg-muted text-muted-foreground/50">
+                              {b.image_url ? (
+                                <img src={b.image_url} alt="" loading="lazy" decoding="async" className="size-full object-contain" />
+                              ) : (
+                                <HugeiconsIcon icon={Image01Icon} size={16} strokeWidth={1.5} />
+                              )}
+                            </div>
+                            <div className="line-clamp-2 w-full leading-snug font-medium">{b.name}</div>
+                          </div>
+                        ))}
+                        {d.benefits.length === 0 && <div className="line-clamp-2 leading-snug font-medium">{d.name}</div>}
+                      </div>
                       {d.is_claimed ? (
                         <span className={cn("inline-flex items-center gap-1 font-medium", OK)}><Tick /> Claimed</span>
                       ) : (
@@ -861,17 +879,42 @@ export default function App() {
                     {languages.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <label>Priority mode</label>
-                <Select
-                  items={Object.fromEntries(MODES)}
-                  value={settings?.priority_mode}
-                  onValueChange={(v) => update({ priority_mode: v as PriorityMode })}
-                >
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {MODES.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <span>Mining list</span>
+                <div className="flex items-center gap-2 text-xs font-medium">
+                  <span className={cn(!blacklistMode ? "text-foreground" : "text-muted-foreground")}>White list</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-label="Use Black list mode"
+                    aria-checked={blacklistMode}
+                    onClick={() => update({ priority_mode: blacklistMode ? "priority_only" : "ending_soonest" })}
+                    className={cn(
+                      "relative h-5 w-9 shrink-0 rounded-full outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+                      blacklistMode ? "bg-primary" : "bg-muted-foreground/40",
+                    )}
+                  >
+                    <span className={cn(
+                      "absolute top-0.5 left-0.5 size-4 rounded-full bg-background shadow-sm transition-transform",
+                      blacklistMode && "translate-x-4",
+                    )} />
+                  </button>
+                  <span className={cn(blacklistMode ? "text-foreground" : "text-muted-foreground")}>Black list</span>
+                </div>
+                {blacklistMode && (
+                  <>
+                    <label>Mining order</label>
+                    <Select
+                      items={Object.fromEntries(BLACKLIST_ORDERS)}
+                      value={settings?.priority_mode}
+                      onValueChange={(v) => update({ priority_mode: v as PriorityMode })}
+                    >
+                      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {BLACKLIST_ORDERS.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
                 <label htmlFor="s-proxy">Proxy</label>
                 <Input
                   id="s-proxy"
@@ -973,8 +1016,8 @@ export default function App() {
 
           <Card size="sm">
             <CardHeader>
-              <CardTitle className="text-lg! font-semibold">Priority</CardTitle>
-              <CardDescription>Games to mine first, in order.</CardDescription>
+              <CardTitle className="text-lg! font-semibold">White list</CardTitle>
+              <CardDescription>Mine only these games in White list mode; prefer them in Black list mode.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               <div className="flex gap-2">
@@ -1010,7 +1053,7 @@ export default function App() {
 
           <Card size="sm">
             <CardHeader>
-              <CardTitle className="text-lg! font-semibold">Exclude</CardTitle>
+              <CardTitle className="text-lg! font-semibold">Black list</CardTitle>
               <CardDescription>Games that are never mined.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
@@ -1052,7 +1095,7 @@ export default function App() {
             </CardContent>
           </Card>
         </div>
-        <div className="sticky bottom-0 mt-auto flex items-center gap-2 border-t bg-background/95 px-3 py-2 backdrop-blur">
+        <div className="sticky bottom-0 mt-auto flex items-center gap-2 border-t bg-background/95 px-3 py-2">
           <span className="mr-auto text-xs text-muted-foreground">Most changes take effect after a reload.</span>
           {dirty && (
             <Badge variant="outline" className={cn("border-amber-500/40", WARN)}>Unsaved changes</Badge>
@@ -1085,7 +1128,7 @@ export default function App() {
             onChange={(e) => setLogView((x) => ({ ...x, search: e.target.value }))}
           />
           <span className="text-xs text-muted-foreground tabular-nums">{visibleLogs.length} lines</span>
-          <Button size="sm" variant="outline" className="ml-auto" disabled={!visibleLogs.length} onClick={() => invoke("copy_text", { text: logText })}>
+          <Button size="sm" variant="outline" className="ml-auto" disabled={!visibleLogs.length} onClick={() => invoke("copy_text", { text: logText() })}>
             <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={2} data-icon="inline-start" />
             Copy
           </Button>
@@ -1118,17 +1161,16 @@ export default function App() {
             <ul>
               <li><b>Main</b>: login, live status, websocket health, mining progress, output log, and the channel list. Click a channel and press <b>Switch</b> to pin it; press Esc to unpin.</li>
               <li><b>Inventory</b>: every campaign and its drops, with progress and account-link status. Use the filters to hide categories.</li>
-              <li><b>Settings</b>: priority and exclude lists, priority mode, and connection options. Most changes apply on the next reload.</li>
+              <li><b>Settings</b>: White list and Black list modes, mining order, and connection options. Most changes apply on the next reload.</li>
             </ul>
             <h4>Login</h4>
             <p>Device-code only: open the shown link, enter the code on Twitch, and approve. No password is ever entered here.</p>
             <h4>Tray</h4>
             <p>Closing the window shuts the miner down cleanly. The tray icon offers <i>Show window</i> and <i>Quit</i>.</p>
-            <h4>Priority modes</h4>
+            <h4>Game lists</h4>
             <ul>
-              <li><b>Priority list only</b>: mine strictly in the order of the priority list.</li>
-              <li><b>Ending soonest first</b>: prefer campaigns closest to ending.</li>
-              <li><b>Low availability first</b>: prefer campaigns offered by the fewest channels.</li>
+              <li><b>White list</b>: mine only listed games, from top to bottom.</li>
+              <li><b>Black list</b>: mine any eligible game except those listed. White-listed games still come first, then the selected mining order applies.</li>
             </ul>
             <p className="text-muted-foreground">
               Files (settings.json, auth.json, log.txt) live in the working directory, or in $RUSTPICK_DIR.

@@ -30,6 +30,8 @@ pub enum Msg {
     MntCleanup,
     MntReload,
     HoursCheck,
+    /// The debounced `Event::Channels` is due.
+    FlushChannels,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,8 @@ pub struct Miner {
     inventory: Vec<Campaign>,
     wanted_games: Vec<Game>,
     channels: Vec<Channel>,
+    /// A `FlushChannels` is already scheduled.
+    channels_flush: bool,
     watching: Option<u64>,
     selected: Option<u64>,
     watch_tx: watch::Sender<Option<WatchTarget>>,
@@ -107,6 +111,7 @@ impl Miner {
             inventory: Vec::new(),
             wanted_games: Vec::new(),
             channels: Vec::new(),
+            channels_flush: false,
             watching: None,
             selected: None,
             watch_tx,
@@ -332,7 +337,22 @@ impl Miner {
         }
     }
 
-    fn emit_channels(&self) {
+    /// Viewer-count messages arrive several times a second across all channels; coalesce
+    /// them so frontends get at most one `Event::Channels` per second.
+    fn emit_channels(&mut self) {
+        if self.channels_flush {
+            return;
+        }
+        self.channels_flush = true;
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            sleep(Duration::from_secs(1)).await;
+            let _ = tx.send(Msg::FlushChannels);
+        });
+    }
+
+    fn flush_channels(&mut self) {
+        self.channels_flush = false;
         let views = self.channels.iter().map(|c| self.channel_view(c)).collect();
         let _ = self.events.send(Event::Channels(views));
     }
@@ -366,6 +386,11 @@ impl Miner {
                     id: d.id.clone(),
                     name: d.name.clone(),
                     rewards: d.rewards_text(),
+                    benefits: d.benefits.iter().map(|b| BenefitView {
+                        id: b.id.clone(),
+                        name: b.name.clone(),
+                        image_url: b.image_url.clone(),
+                    }).collect(),
                     current_minutes: d.current_minutes(),
                     required_minutes: d.required_minutes,
                     is_claimed: d.is_claimed,
@@ -659,6 +684,7 @@ impl Miner {
                 self.change_state(State::ChannelsCleanup);
             }
             Msg::HoursCheck => self.check_active_hours(),
+            Msg::FlushChannels => self.flush_channels(),
             Msg::MntReload => {
                 tracing::debug!("Maintenance task requests a reload");
                 self.change_state(State::InventoryFetch);

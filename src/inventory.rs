@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 pub struct Benefit {
     pub id: String,
     pub name: String,
+    pub image_url: String,
     pub badge_or_emote: bool,
 }
 
@@ -21,6 +22,7 @@ impl Benefit {
         Some(Benefit {
             id: json_str(b.get("id")?)?,
             name: b.get("name").and_then(json_str).unwrap_or_default(),
+            image_url: b.get("imageAssetURL").and_then(json_str).unwrap_or_default(),
             badge_or_emote: matches!(kind, "BADGE" | "EMOTE"),
         })
     }
@@ -432,7 +434,7 @@ mod tests {
                 "id": "d1", "name": "Drop", "requiredMinutesWatched": required,
                 "startAt": (now - Duration::hours(1)).to_rfc3339(),
                 "endAt": (now + Duration::hours(5)).to_rfc3339(),
-                "benefitEdges": [{"benefit": {"id": "b1", "name": "Skin", "distributionType": "DIRECT_ENTITLEMENT", "imageAssetURL": ""}}],
+                "benefitEdges": [{"benefit": {"id": "b1", "name": "Skin", "distributionType": "DIRECT_ENTITLEMENT", "imageAssetURL": "https://x/reward.png"}}],
                 "preconditionDrops": null,
                 "self": {"dropInstanceID": null, "isClaimed": false, "currentMinutesWatched": minutes_watched}
             }]
@@ -446,6 +448,7 @@ mod tests {
         assert!(c.can_earn(None, false, false));
         assert_eq!(c.first_drop(false), Some(0));
         assert_eq!(c.image_url, "https://x/1.jpg");
+        assert_eq!(c.drops[0].benefits[0].image_url, "https://x/reward.png");
         c.set_drop_minutes(0, 25);
         assert_eq!(c.drops[0].current_minutes(), 25);
         assert_eq!(c.remaining_minutes(), 35);
