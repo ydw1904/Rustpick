@@ -367,8 +367,6 @@ export default function App() {
   const [logs, setLogs] = useState<LogLine[]>([])
   const [logView, setLogView] = useStored<{ level: string; search: string }>("log-view", { level: "INFO", search: "" })
   const [release, setRelease] = useState<{ version: string; url: string } | null>(null)
-  const consoleRef = useRef<HTMLPreElement>(null)
-  const stickRef = useRef(true)
   const selectedRef = useRef<number | null>(null)
   selectedRef.current = selected
 
@@ -451,11 +449,6 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey)
   }, [])
 
-  useEffect(() => {
-    const el = consoleRef.current
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight
-  }, [consoleLines])
-
   const dirty = settings != null && JSON.stringify(settings) !== saved
   const update = (patch: Partial<Settings>) => setSettings((s) => (s ? { ...s, ...patch } : s))
   const saveSettings = () => {
@@ -498,7 +491,9 @@ export default function App() {
   /* log filter: the selected level and everything more severe */
   const logRank = (lvl: string) => { const i = LOG_LEVELS.indexOf(lvl as typeof LOG_LEVELS[number]); return i < 0 ? LOG_LEVELS.length : i }
   const logQ = logView.search.trim().toLowerCase()
-  const visibleLogs = logs.filter((l) => logRank(l.level) <= logRank(logView.level) && (!logQ || l.msg.toLowerCase().includes(logQ)))
+  // newest first, same as the Output pane
+  const visibleLogs = logs.filter((l) => logRank(l.level) <= logRank(logView.level) && (!logQ || l.msg.toLowerCase().includes(logQ))).reverse()
+  const consoleText = [...consoleLines].reverse().join("\n")
   const logText = () => visibleLogs.map((l) => `${new Date(l.ts).toLocaleTimeString()} ${l.level.padEnd(5)} ${l.msg}`).join("\n")
 
   const statusCls = status.startsWith("Watching") ? OK : status === "Idle" || status === "Exited" ? DIM : WARN
@@ -704,17 +699,18 @@ export default function App() {
         </div>
 
         <Card size="sm" className="flex min-h-48 flex-1 flex-col">
-          <CardHeader><CardTitle>Output</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Output</CardTitle>
+            <CardAction>
+              <Button size="sm" variant="outline" disabled={!consoleLines.length} onClick={() => invoke("copy_text", { text: consoleText })}>
+                <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={2} data-icon="inline-start" />
+                Copy
+              </Button>
+            </CardAction>
+          </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col">
-            <pre
-              ref={consoleRef}
-              onScroll={(e) => {
-                const el = e.currentTarget
-                stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30
-              }}
-              className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap"
-            >
-              {consoleLines.length ? consoleLines.join("\n") : <span className="text-muted-foreground">Waiting for output…</span>}
+            <pre className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+              {consoleLines.length ? consoleText : <span className="text-muted-foreground">Waiting for output…</span>}
             </pre>
           </CardContent>
         </Card>
