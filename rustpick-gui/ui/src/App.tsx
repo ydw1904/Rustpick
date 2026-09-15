@@ -1166,7 +1166,7 @@ export default function App() {
             <h4>Login</h4>
             <p>Device-code only: open the shown link, enter the code on Twitch, and approve. No password is ever entered here.</p>
             <h4>Tray</h4>
-            <p>Closing the window shuts the miner down cleanly. The tray icon offers <i>Show window</i> and <i>Quit</i>.</p>
+            <p>With <i>Autostart in tray</i> enabled, Rustpick starts hidden and closing its window keeps it running. Normal launches keep the Dock icon and exit when closed.</p>
             <h4>Game lists</h4>
             <ul>
               <li><b>White list</b>: mine only listed games, from top to bottom.</li>

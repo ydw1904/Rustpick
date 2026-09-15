@@ -638,6 +638,7 @@ fn show_main(app: &AppHandle) {
 fn main() {
     // `--profile <name>`: a separate settings/login/lock directory, one process per profile
     let args: Vec<String> = std::env::args().collect();
+    let tray_mode = args.iter().any(|a| a == "--tray");
     let profile = args.iter().position(|a| a == "--profile").and_then(|i| args.get(i + 1)).cloned();
     if let Some(p) = &profile
         && let Err(e) = rustpick::settings::set_profile(p)
@@ -703,10 +704,15 @@ fn main() {
             frontend_ready,
         ])
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            if tray_mode {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+
             let tray = TrayIconBuilder::new()
                 .icon(tray_icon())
                 .tooltip(&title)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(tray_mode)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => app.state::<AppState>().handle.send(Command::Exit),
                     "show" => show_main(app),
@@ -805,8 +811,14 @@ fn main() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                .on_tray_icon_event(move |tray, event| {
+                    if !tray_mode
+                        && let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                    {
                         show_main(tray.app_handle());
                     }
                 })
@@ -836,24 +848,26 @@ fn main() {
                 let _ = w.set_title(&title);
             }
             // the window starts hidden (tauri.conf.json); `--tray` keeps it that way
-            if !std::env::args().any(|a| a == "--tray") {
+            if !tray_mode {
                 show_main(app.handle());
             }
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // Close = graceful shutdown: ask the miner to exit; the forwarder calls
-            // app.exit(0) once it acknowledges with Event::Exited.
+        .on_window_event(move |window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let app = window.app_handle();
-                app.state::<AppState>().handle.send(Command::Exit);
-                let app = app.clone();
-                // ponytail: 3s hard-exit fallback if the core never acknowledges.
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    app.exit(0);
-                });
+                if tray_mode {
+                    let _ = window.hide();
+                } else {
+                    let app = window.app_handle();
+                    app.state::<AppState>().handle.send(Command::Exit);
+                    let app = app.clone();
+                    // ponytail: 3s hard-exit fallback if the core never acknowledges.
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                        app.exit(0);
+                    });
+                }
             }
         })
         .run(tauri::generate_context!())
