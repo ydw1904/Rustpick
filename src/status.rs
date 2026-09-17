@@ -120,7 +120,7 @@ pub fn spawn(mut events: broadcast::Receiver<Event>) -> JoinHandle<()> {
                         Event::Inventory(campaigns) => {
                             s.unlinked = campaigns
                                 .into_iter()
-                                .filter(|c| c.status == CampaignStatus::Active && c.needs_link)
+                                .filter(|c| c.status == CampaignStatus::Active && c.needs_link && !c.eligible)
                                 .map(|c| Unlinked { game: c.game, campaign: c.name, link_url: c.link_url })
                                 .collect();
                             true

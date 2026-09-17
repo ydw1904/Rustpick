@@ -1,4 +1,8 @@
-//! Headless frontend: prints miner events to stdout, Ctrl-C exits cleanly.
+//! Terminal frontend: a TUI when run bare in a terminal, otherwise subcommands and plain
+//! event lines on stdout. Ctrl-C exits cleanly.
+
+#[path = "cli/tui.rs"]
+mod tui;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
@@ -6,6 +10,7 @@ use rustpick::events::{CampaignStatus, ChannelStatus, Claim};
 use rustpick::settings::{Order, Theme, data_dir};
 use rustpick::{Command, Event, Miner, Settings};
 use std::collections::BTreeSet;
+use std::io::IsTerminal;
 use tokio::sync::broadcast;
 #[derive(Parser)]
 #[command(name = "rustpick", version, about = "Headless Twitch drops miner (a port of TwitchDropsMiner)")]
@@ -26,7 +31,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Mine drops (the default when no subcommand is given)
+    /// Mine drops with plain line output (a bare `rustpick` does this too when not in a terminal)
     Run {
         /// Fetch the inventory once, write it to dump.dat and exit
         #[arg(long)]
@@ -80,9 +85,16 @@ async fn main() -> Result<()> {
     if let Some(p) = &cli.profile {
         rustpick::settings::set_profile(p)?;
     }
-    rustpick::init_logging(cli.verbose, cli.log, None)?;
+    // A bare `rustpick` in a terminal opens the TUI; stderr logs would garble it, so they go to
+    // log.txt and its Log tab instead.
+    let tui_events = (cli.cmd.is_none() && std::io::stdout().is_terminal()).then(|| broadcast::channel(1024).0);
+    rustpick::init_logging(cli.verbose, cli.log || tui_events.is_some(), tui_events.clone())?;
     let mut settings = Settings::load()?;
     rustpick::translate::init(&settings.language);
+    if let Some(events) = tui_events {
+        let _lock = lock_or_exit()?;
+        return tui::run(settings, events).await;
+    }
     match cli.cmd.unwrap_or(Cmd::Run { dump: false, no_interactive_login: false, metrics: None }) {
         Cmd::Run { dump, no_interactive_login, metrics } => {
             if let Some(addr) = metrics {
@@ -356,10 +368,10 @@ fn print_claims() -> Result<()> {
 /// Exit code for "a login is needed but --no-interactive-login was given".
 const EXIT_LOGIN_REQUIRED: i32 = 4;
 
-async fn run(settings: Settings, dump: bool, no_interactive_login: bool) -> Result<()> {
-    let lock = rustpick::lock::SingleInstance::acquire(&data_dir().join("lock.file"));
-    let lock = match lock {
-        Ok(l) => l,
+/// The data dir's single-instance lock; exits with code 3 while another miner holds it.
+fn lock_or_exit() -> Result<rustpick::lock::SingleInstance> {
+    match rustpick::lock::SingleInstance::acquire(&data_dir().join("lock.file")) {
+        Ok(l) => Ok(l),
         Err(e)
             if matches!(
                 e.kind(),
@@ -369,8 +381,12 @@ async fn run(settings: Settings, dump: bool, no_interactive_login: bool) -> Resu
             eprintln!("Another instance appears to be running ({e}). Exiting.");
             std::process::exit(3);
         }
-        Err(e) => return Err(e).context("Could not create the lock file"),
-    };
+        Err(e) => Err(e).context("Could not create the lock file"),
+    }
+}
+
+async fn run(settings: Settings, dump: bool, no_interactive_login: bool) -> Result<()> {
+    let lock = lock_or_exit()?;
     let (events_tx, mut events) = broadcast::channel(1024);
     let (miner, handle) = Miner::new(settings, events_tx, dump)?;
     let mut task = tokio::spawn(miner.run());

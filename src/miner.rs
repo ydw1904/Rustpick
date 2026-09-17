@@ -1266,7 +1266,7 @@ impl Miner {
         triggers.sort();
         triggers.dedup();
         tracing::info!("Inventory: {} campaigns", campaigns.len());
-        for c in campaigns.iter().filter(|c| c.active() && c.needs_link()) {
+        for c in campaigns.iter().filter(|c| c.active() && c.needs_link() && !c.has_badge_or_emote) {
             if self.announced_unlinked.insert(c.id.clone()) {
                 self.print(format!("{} ({}) needs a linked account: {}", c.name, c.game.name, c.link_url));
                 let _ = self.events.send(Event::UnlinkedCampaign {

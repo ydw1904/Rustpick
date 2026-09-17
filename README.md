@@ -90,13 +90,20 @@ npm run tauri build
 
 ### CLI
 
-Run Rustpick with no command to start mining:
+Run Rustpick with no command to start mining in the terminal UI:
 
 ```sh
 rustpick
 ```
 
-On first run, open the activation page shown in the terminal and enter the device code. Useful commands include:
+On first run, open the activation page shown in the popup and enter the device code. The UI has a
+Main tab (progress, channels, output) and a Log tab. Keys: `1`/`2` switch tabs, `j`/`k` move,
+`Enter` watches the selected channel, `p` pauses, `r` reloads, `q` quits. Press `/` for commands
+(`watch <channel>`, `auto`, `pause`, `resume`, `reload`, `quit`), with `Tab` to complete. In the UI,
+logs go to `log.txt` and the Log tab. When output isn't a terminal, or with `rustpick run`, Rustpick
+prints plain lines instead, which suits services and Docker.
+
+Useful commands include:
 
 ```sh
 rustpick priority "Game A" "Game B"  # White list, highest priority first

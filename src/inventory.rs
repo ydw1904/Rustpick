@@ -223,9 +223,10 @@ impl Campaign {
         if self.has_badge_or_emote { badges_emotes_enabled } else { self.mine_unlinked || !self.needs_link() }
     }
 
-    /// Badge/emote campaigns don't need a linked account; everything else does.
+    /// The game account isn't linked. Badge/emote campaigns still earn without it,
+    /// see `eligible`.
     pub fn needs_link(&self) -> bool {
-        !self.has_badge_or_emote && !self.linked
+        !self.linked
     }
 
     pub fn finished(&self) -> bool {
@@ -445,6 +446,23 @@ mod tests {
             }]
         });
         Campaign::from_json(&data, &HashMap::new()).unwrap()
+    }
+
+    #[test]
+    fn needs_link_is_plain_unlinked() {
+        let mut c = campaign(0, 60);
+        c.linked = false;
+        // badge/emote campaigns are still unlinked, they just earn anyway
+        c.has_badge_or_emote = true;
+        assert!(c.needs_link());
+        assert!(c.eligible(true));
+        assert!(!c.eligible(false));
+        c.has_badge_or_emote = false;
+        assert!(c.needs_link());
+        assert!(!c.eligible(true));
+        c.linked = true;
+        assert!(!c.needs_link());
+        assert!(c.eligible(true));
     }
 
     #[test]

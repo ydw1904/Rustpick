@@ -478,7 +478,7 @@ export default function App() {
     if (c.status === "Upcoming" && !filters.upcoming) return false
     if (c.status === "Expired" && !filters.expired) return false
     if (blacklisted && !filters.excluded) return false
-    if (c.needs_link && !filters.notlinked) return false
+    if (!c.linked && !filters.notlinked) return false
     const q = inv.search.trim().toLowerCase()
     if (q && !c.game.toLowerCase().includes(q) && !c.name.toLowerCase().includes(q)) return false
     return true
