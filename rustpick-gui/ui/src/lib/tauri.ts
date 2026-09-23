@@ -6,6 +6,7 @@ declare global {
     __TAURI__: {
       core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
       event: { listen: (name: string, cb: (e: { payload: unknown }) => void) => Promise<Unlisten> }
+      window?: { getCurrentWindow: () => { setTheme: (theme: "light" | "dark" | null) => Promise<void> } }
     }
   }
 }

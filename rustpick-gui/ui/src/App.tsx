@@ -429,6 +429,8 @@ export default function App() {
 
   useEffect(() => {
     const theme = settings?.theme ?? "system"
+    // the native window too, so the titlebar and the glass material match
+    window.__TAURI__.window?.getCurrentWindow().setTheme(theme === "system" ? null : theme).catch(() => {})
     const mq = window.matchMedia("(prefers-color-scheme: dark)")
     const apply = () =>
       document.documentElement.classList.toggle("dark", theme === "dark" || (theme === "system" && mq.matches))
@@ -551,7 +553,7 @@ export default function App() {
                   </Badge>
                 </CardAction>
                 <CardDescription>
-                  {userId != null ? <>User ID <span className="font-mono text-foreground">{userId}</span></> : "Twitch device login"}
+                  {userId != null ? <>User ID <span className="font-mono text-foreground select-text">{userId}</span></> : "Twitch device login"}
                 </CardDescription>
               </CardHeader>
               {login && (
@@ -564,7 +566,7 @@ export default function App() {
                     and enter this code:
                   </p>
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2">
-                    <span className="font-mono text-2xl font-medium tracking-[0.2em]">{login.code}</span>
+                    <span className="font-mono text-2xl font-medium tracking-[0.2em] select-text">{login.code}</span>
                     <div className="flex gap-2">
                       <Button variant="outline" size="sm" onClick={() => invoke("copy_text", { text: login.code })}>
                         <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={2} data-icon="inline-start" />
@@ -643,7 +645,7 @@ export default function App() {
             </Card>
           </div>
 
-          <Card size="sm" className="self-start">
+          <Card size="sm">
             <CardHeader>
               <CardTitle>Channels</CardTitle>
               <CardAction>
@@ -653,52 +655,55 @@ export default function App() {
               </CardAction>
               <CardDescription>Select a channel and press Switch. Esc clears the selection.</CardDescription>
             </CardHeader>
-            <CardContent className="px-0">
-              <div className="max-h-[420px] overflow-y-auto border-t">
-                <Table>
-                  <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
-                    <TableRow className="hover:bg-transparent [&>th]:h-9 [&>th]:text-xs [&>th]:text-muted-foreground">
-                      <TableHead className="pl-4">Channel</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Game</TableHead>
-                      <TableHead className="text-center" title="Drops enabled"><HugeiconsIcon icon={GiftIcon} size={14} strokeWidth={2} className="inline" /></TableHead>
-                      <TableHead className="text-right">Viewers</TableHead>
-                      <TableHead className="pr-4 text-center" title="Allow-list based"><HugeiconsIcon icon={LockIcon} size={14} strokeWidth={2} className="inline" /></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {channels.map((c) => (
-                      <TableRow
-                        key={c.id}
-                        aria-selected={selected === c.id}
-                        className={cn("cursor-pointer", selected === c.id && "bg-accent hover:bg-accent")}
-                        onClick={() => setSelected((sel) => (sel === c.id ? null : c.id))}
-                      >
-                        <TableCell className={cn("pl-4 font-medium", watching === c.id && OK)} title={watching === c.id ? "Currently watching" : undefined}>
-                          {c.name}
-                        </TableCell>
-                        <TableCell className={cn("text-xs", STATUS_CLS[c.status])}>
-                          <span className="inline-flex items-center gap-1.5"><Dot />{c.status}</span>
-                        </TableCell>
-                        <TableCell className={cn(!c.game && "text-muted-foreground")}>{c.game ?? "–"}</TableCell>
-                        <TableCell className="text-center">{c.drops_enabled && <Tick className="text-muted-foreground" />}</TableCell>
-                        <TableCell className="text-right text-muted-foreground tabular-nums">{c.viewers?.toLocaleString() ?? ""}</TableCell>
-                        <TableCell className="pr-4 text-center">{c.acl_based && <Tick className="text-muted-foreground" />}</TableCell>
+            <CardContent className="flex flex-1 flex-col px-0">
+              {/* the left column sets the row height; the list scrolls inside it */}
+              <div className="relative min-h-48 flex-1 border-t">
+                <div className="absolute inset-0 overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
+                      <TableRow className="hover:bg-transparent [&>th]:h-9 [&>th]:text-xs [&>th]:text-muted-foreground">
+                        <TableHead className="pl-4">Channel</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Game</TableHead>
+                        <TableHead className="text-center" title="Drops enabled"><HugeiconsIcon icon={GiftIcon} size={14} strokeWidth={2} className="inline" /></TableHead>
+                        <TableHead className="text-right">Viewers</TableHead>
+                        <TableHead className="pr-4 text-center" title="Allow-list based"><HugeiconsIcon icon={LockIcon} size={14} strokeWidth={2} className="inline" /></TableHead>
                       </TableRow>
-                    ))}
-                    {channels.length === 0 && (
-                      <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No channels yet.</TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {channels.map((c) => (
+                        <TableRow
+                          key={c.id}
+                          aria-selected={selected === c.id}
+                          className={cn(selected === c.id && "bg-accent hover:bg-accent")}
+                          onClick={() => setSelected((sel) => (sel === c.id ? null : c.id))}
+                        >
+                          <TableCell className={cn("pl-4 font-medium", watching === c.id && OK)} title={watching === c.id ? "Currently watching" : undefined}>
+                            {c.name}
+                          </TableCell>
+                          <TableCell className={cn("text-xs", STATUS_CLS[c.status])}>
+                            <span className="inline-flex items-center gap-1.5"><Dot />{c.status}</span>
+                          </TableCell>
+                          <TableCell className={cn(!c.game && "text-muted-foreground")}>{c.game ?? "–"}</TableCell>
+                          <TableCell className="text-center">{c.drops_enabled && <Tick className="text-muted-foreground" />}</TableCell>
+                          <TableCell className="text-right text-muted-foreground tabular-nums">{c.viewers?.toLocaleString() ?? ""}</TableCell>
+                          <TableCell className="pr-4 text-center">{c.acl_based && <Tick className="text-muted-foreground" />}</TableCell>
+                        </TableRow>
+                      ))}
+                      {channels.length === 0 && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">No channels yet.</TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        <Card size="sm" className="flex min-h-48 flex-1 flex-col">
+        <Card size="sm" className="flex min-h-40 flex-1 flex-col">
           <CardHeader>
             <CardTitle>Output</CardTitle>
             <CardAction>
@@ -709,7 +714,7 @@ export default function App() {
             </CardAction>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col">
-            <pre className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+            <pre className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere">
               {consoleLines.length ? consoleText : <span className="text-muted-foreground">Waiting for output…</span>}
             </pre>
           </CardContent>
@@ -741,7 +746,7 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-2.5">
             <span className="text-sm text-muted-foreground">Show</span>
             {FILTERS.map(([key, label]) => (
-              <label key={key} className="flex cursor-pointer items-center gap-1.5 text-sm">
+              <label key={key} className="flex items-center gap-1.5 text-sm">
                 <Checkbox
                   checked={filters[key]}
                   onCheckedChange={(checked) => setFilters((f) => ({ ...f, [key]: !!checked }))}
@@ -979,14 +984,14 @@ export default function App() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-2.5 text-sm">
-                <label className="flex cursor-pointer items-center gap-2.5">
+                <label className="flex items-center gap-2.5">
                   <Checkbox
                     checked={!!settings?.enable_badges_emotes}
                     onCheckedChange={(checked) => update({ enable_badges_emotes: !!checked })}
                   />
                   Partial support for badges and emotes
                 </label>
-                <label className="flex cursor-pointer items-center gap-2.5">
+                <label className="flex items-center gap-2.5">
                   <Checkbox
                     checked={!!settings?.available_drops_check}
                     onCheckedChange={(checked) => update({ available_drops_check: !!checked })}
@@ -1149,7 +1154,7 @@ export default function App() {
             Copy
           </Button>
         </div>
-        <pre className="min-h-0 flex-1 overflow-auto rounded-xl border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+        <pre className="min-h-0 flex-1 overflow-auto rounded-xl border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere">
           {visibleLogs.length ? visibleLogs.map((l, i) => (
             <div key={i} className={l.level === "ERROR" ? BAD : l.level === "WARN" ? WARN : undefined}>
               <span className="text-muted-foreground">{new Date(l.ts).toLocaleTimeString()} </span>
