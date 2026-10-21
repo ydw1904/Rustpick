@@ -1,14 +1,11 @@
-//! Games, streams, channels and the "minute watched" payload.
+//! Games, streams, channels and the watch requests.
 
-use crate::constants::SPECIAL_GAME_IDS;
+use crate::constants::{SPECIAL_GAME_IDS, gql};
 use crate::http::Http;
-use crate::util::{isonow, json_str, json_u64, slug};
-use anyhow::{Result, anyhow};
-use base64::Engine;
-use regex::Regex;
-use serde_json::{Value, json};
+use crate::util::{json_str, json_u64, slug};
+use anyhow::{Result, anyhow, bail};
+use serde_json::Value;
 use std::hash::{Hash, Hasher};
-use std::sync::LazyLock;
 use tokio::task::AbortHandle;
 
 #[derive(Clone, Debug)]
@@ -174,77 +171,61 @@ impl Channel {
 pub struct WatchTarget {
     pub channel_id: u64,
     pub login: String,
-    pub page_url: String,
-    pub broadcast_id: u64,
-    pub game: Option<Game>,
-    pub user_id: u64,
 }
 
-impl WatchTarget {
-    pub fn new(channel: &Channel, stream: &Stream, base_url: &str, user_id: u64) -> Self {
-        Self {
-            channel_id: channel.id,
-            login: channel.login.clone(),
-            page_url: channel.url(base_url),
-            broadcast_id: stream.broadcast_id,
-            game: stream.game.clone(),
-            user_id,
+/// Playback access token -> usher master playlist -> URL of its last (lowest quality) variant.
+pub async fn get_stream_url(http: &Http, login: &str) -> Result<String> {
+    let v = http.gql(gql::playback_access_token(login)).await?;
+    let token = &v["data"]["streamPlaybackAccessToken"];
+    let (Some(value), Some(sig)) = (token["value"].as_str(), token["signature"].as_str()) else {
+        bail!("no playback access token: {v}");
+    };
+    let url = reqwest::Url::parse_with_params(
+        &format!("https://usher.ttvnw.net/api/channel/hls/{login}.m3u8"),
+        &[("sig", sig), ("token", value)],
+    )?;
+    // errors (e.g. offline) come back as JSON instead of a playlist
+    let text = http.text(url.as_str()).await?;
+    text.lines()
+        .rev()
+        .find(|l| l.starts_with("http"))
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("no stream playlist: {}", text.chars().take(300).collect::<String>()))
+}
+
+/// "Watch" like a player: fetch the live chunk list and HEAD every chunk (no video is
+/// downloaded). Twitch dropped spade "minute-watched" credit in Oct 2026; upstream TDM
+/// switched the same way. True if every request succeeded.
+pub async fn send_watch(http: &Http, stream_url: &str) -> bool {
+    let list = match http.send(http.get(stream_url).header("Connection", "close")).await {
+        // 4xx: the stream went offline or the playlist URL expired
+        Ok(resp) if resp.status().is_success() => resp.text().await.unwrap_or_default(),
+        Ok(resp) => {
+            tracing::debug!("chunk list: {}", resp.status());
+            return false;
         }
-    }
-
-    /// Base64 "minute-watched" event, as posted to the spade endpoint.
-    pub fn spade_payload(&self) -> String {
-        let payload = json!([{
-            "event": "minute-watched",
-            "properties": {
-                "broadcast_id": self.broadcast_id.to_string(),
-                "channel_id": self.channel_id.to_string(),
-                "channel": self.login,
-                "client_time": isonow(),
-                "game": self.game.as_ref().map(|g| g.name.as_str()).unwrap_or(""),
-                "game_id": self.game.as_ref().map(|g| g.id.to_string()).unwrap_or_default(),
-                "hidden": false,
-                "is_live": true,
-                "live": true,
-                "logged_in": true,
-                "minutes_logged": 1,
-                "muted": false,
-                "user_id": self.user_id,
-            }
-        }]);
-        base64::engine::general_purpose::STANDARD.encode(payload.to_string())
-    }
-}
-
-/// Streamer page (HTML) -> settings JS -> spade URL. Mobile pages embed it directly.
-pub async fn get_spade_url(http: &Http, page_url: &str) -> Result<String> {
-    static SETTINGS: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)src="(https://[\w.]+/config/settings\.[0-9a-f]{32}\.js)""#).unwrap()
-    });
-    static SPADE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"(?i)"spade_?url": ?"(https://[.\w\-/]+)""#).unwrap());
-    let html = http.text(page_url).await?;
-    if let Some(m) = SPADE.captures(&html) {
-        return Ok(m[1].to_owned());
-    }
-    let settings_url = SETTINGS
-        .captures(&html)
-        .map(|m| m[1].to_owned())
-        .ok_or_else(|| anyhow!("spade_url extraction failed: step #1"))?;
-    let js = http.text(&settings_url).await?;
-    SPADE
-        .captures(&js)
-        .map(|m| m[1].to_owned())
-        .ok_or_else(|| anyhow!("spade_url extraction failed: step #2"))
-}
-
-/// POST one minute-watched event. True on the expected 204.
-pub async fn send_watch(http: &Http, spade_url: &str, target: &WatchTarget) -> bool {
-    match http.send(http.post(spade_url).form(&[("data", target.spade_payload())])).await {
-        Ok(resp) => resp.status().as_u16() == 204,
         Err(e) => {
-            tracing::debug!("watch request failed: {e}");
-            false
+            tracing::debug!("chunk list request failed: {e}");
+            return false;
+        }
+    };
+    let chunks: Vec<&str> = list.lines().filter(|l| l.starts_with("http")).collect();
+    if chunks.is_empty() {
+        tracing::debug!("chunk list has no chunks: {}", list.chars().take(300).collect::<String>());
+        return false;
+    }
+    for chunk in chunks {
+        match http.send(http.head(chunk)).await {
+            Ok(resp) if resp.status().as_u16() == 200 => {}
+            Ok(resp) => {
+                tracing::debug!("chunk HEAD: {}", resp.status());
+                return false;
+            }
+            Err(e) => {
+                tracing::debug!("chunk HEAD failed: {e}");
+                return false;
+            }
         }
     }
+    true
 }

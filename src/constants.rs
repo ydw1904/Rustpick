@@ -12,7 +12,7 @@ pub const MAX_CHANNELS: usize = (MAX_WEBSOCKETS * WS_TOPICS_LIMIT - BASE_TOPICS)
 pub const PING_INTERVAL: Duration = Duration::from_secs(3 * 60);
 pub const PING_TIMEOUT: Duration = Duration::from_secs(10);
 pub const ONLINE_DELAY: Duration = Duration::from_secs(120);
-pub const WATCH_INTERVAL: Duration = Duration::from_secs(59);
+pub const WATCH_INTERVAL: Duration = Duration::from_secs(20);
 pub const SPECIAL_GAME_IDS: [u64; 2] = [509663, 509672];
 pub const WS_URL: &str = "wss://pubsub-edge.twitch.tv/v1";
 pub const GQL_URL: &str = "https://gql.twitch.tv/gql";
@@ -76,6 +76,15 @@ pub mod gql {
     }
 
     /// Current drop progress for the watched channel.
+    /// Signed token for the stream's HLS playlist.
+    pub fn playback_access_token(login: &str) -> Value {
+        persisted(
+            "PlaybackAccessToken",
+            "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9",
+            json!({"isLive": true, "isVod": false, "login": login, "platform": "web", "playerType": "site", "vodID": ""}),
+        )
+    }
+
     pub fn current_drop(channel_id: u64) -> Value {
         persisted(
             "DropCurrentSessionContext",

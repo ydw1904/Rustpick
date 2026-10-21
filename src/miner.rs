@@ -1,7 +1,7 @@
 //! The mining state machine. One task owns all state; websocket, timers and frontends talk
 //! to it through `Msg`. Ported from upstream `twitch.py`, minus the GUI coupling.
 
-use crate::channel::{Channel, Game, Stream, WatchTarget, get_spade_url, send_watch};
+use crate::channel::{Channel, Game, Stream, WatchTarget, get_stream_url, send_watch};
 use crate::constants::{MAX_CHANNELS, ONLINE_DELAY, WATCH_INTERVAL, gql, topic};
 use crate::events::*;
 use crate::http::Http;
@@ -26,7 +26,7 @@ pub enum Msg {
     Cmd(Command),
     Ws { topic: String, message: Value },
     OnlineCheck(u64),
-    WatchTick { channel_id: u64, sent_at: Instant },
+    WatchTick { channel_id: u64 },
     MntCleanup,
     MntReload,
     HoursCheck,
@@ -489,8 +489,10 @@ impl Miner {
 
     fn watch(&mut self, id: u64, update_status: bool) {
         let Some(ch) = self.channel(id) else { return };
-        let Some(stream) = &ch.stream else { return };
-        let target = WatchTarget::new(ch, stream, self.http.info.url, self.http.user_id());
+        if ch.stream.is_none() {
+            return;
+        }
+        let target = WatchTarget { channel_id: id, login: ch.login.clone() };
         let name = ch.name().to_owned();
         self.watching = Some(id);
         if !self.paused {
@@ -674,8 +676,8 @@ impl Miner {
                     }
                 }
             }
-            Msg::WatchTick { channel_id, sent_at } => {
-                if let Err(e) = self.watch_tick(channel_id, sent_at).await {
+            Msg::WatchTick { channel_id } => {
+                if let Err(e) = self.watch_tick(channel_id).await {
                     tracing::error!("Watch tick failed: {e:#}");
                 }
             }
@@ -821,9 +823,9 @@ impl Miner {
         Ok(())
     }
 
-    /// 20s after each watch payload: if Twitch didn't report progress, ask GQL, else pretend.
-    async fn watch_tick(&mut self, channel_id: u64, sent_at: Instant) -> Result<()> {
-        if self.paused || self.watching != Some(channel_id) || self.last_progress > sent_at {
+    /// After each watch request: if Twitch hasn't reported progress for a minute, ask GQL, else pretend.
+    async fn watch_tick(&mut self, channel_id: u64) -> Result<()> {
+        if self.paused || self.watching != Some(channel_id) || self.last_progress.elapsed() < Duration::from_secs(60) {
             return Ok(());
         }
         let Some(ch) = self.channel(channel_id).cloned() else { return Ok(()) };
@@ -1472,9 +1474,9 @@ async fn maintenance(triggers: Vec<DateTime<Utc>>, tx: mpsc::UnboundedSender<Msg
     let _ = tx.send(Msg::MntReload);
 }
 
-/// Posts a "minute watched" every WATCH_INTERVAL for whatever the miner says to watch.
+/// Sends a watch request every WATCH_INTERVAL for whatever the miner says to watch.
 async fn watch_loop(http: Arc<Http>, mut rx: watch::Receiver<Option<WatchTarget>>, msgs: mpsc::UnboundedSender<Msg>) {
-    let mut spade_cache: HashMap<u64, String> = HashMap::new();
+    let mut url_cache: HashMap<u64, String> = HashMap::new();
     loop {
         let target = loop {
             if let Some(t) = (*rx.borrow_and_update()).clone() {
@@ -1484,30 +1486,31 @@ async fn watch_loop(http: Arc<Http>, mut rx: watch::Receiver<Option<WatchTarget>
                 return;
             }
         };
-        let spade_url = match spade_cache.get(&target.channel_id) {
-            Some(u) => u.clone(),
-            None => match get_spade_url(&http, &target.page_url).await {
+        let started = Instant::now();
+        let stream_url = match url_cache.get(&target.channel_id) {
+            Some(u) => Some(u.clone()),
+            None => match get_stream_url(&http, &target.login).await {
                 Ok(u) => {
-                    spade_cache.insert(target.channel_id, u.clone());
-                    u
+                    url_cache.insert(target.channel_id, u.clone());
+                    Some(u)
                 }
                 Err(e) => {
-                    tracing::error!("Spade URL lookup failed for {}: {e}", target.login);
-                    tokio::select! {
-                        _ = sleep(WATCH_INTERVAL) => {}
-                        _ = rx.changed() => {}
-                    }
-                    continue;
+                    tracing::error!("Stream URL lookup failed for {}: {e:#}", target.login);
+                    None
                 }
             },
         };
-        if !send_watch(&http, &spade_url, &target).await {
+        if let Some(u) = stream_url
+            && !send_watch(&http, &u).await
+        {
             tracing::debug!("Watch request failed for channel: {}", target.login);
+            // the playlist URL is signed and expires; fetch a fresh one next time
+            url_cache.remove(&target.channel_id);
         }
-        let sent_at = Instant::now();
-        sleep(Duration::from_secs(20)).await;
-        let _ = msgs.send(Msg::WatchTick { channel_id: target.channel_id, sent_at });
-        let remaining = WATCH_INTERVAL.saturating_sub(sent_at.elapsed());
+        // give Twitch ~15s to report progress before the miner checks
+        sleep(Duration::from_secs(15).saturating_sub(started.elapsed())).await;
+        let _ = msgs.send(Msg::WatchTick { channel_id: target.channel_id });
+        let remaining = WATCH_INTERVAL.saturating_sub(started.elapsed());
         tokio::select! {
             _ = sleep(remaining) => {}
             r = rx.changed() => {

@@ -1,6 +1,6 @@
 //! Small helpers shared across the crate.
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use rand::RngExt;
 use regex::Regex;
 use serde_json::Value;
@@ -23,10 +23,6 @@ pub fn timestamp(s: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|d| d.with_timezone(&Utc))
-}
-
-pub fn isonow() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// Read a JSON field that Twitch returns either as a number or a numeric string.

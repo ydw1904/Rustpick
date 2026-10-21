@@ -129,6 +129,10 @@ impl Http {
         self.with_headers(self.client.post(url))
     }
 
+    pub fn head(&self, url: &str) -> RequestBuilder {
+        self.with_headers(self.client.head(url))
+    }
+
     /// Send with exponential backoff on connection problems and 5xx responses.
     pub async fn send(&self, rb: RequestBuilder) -> Result<Response> {
         let mut backoff = Backoff::new(180.0);
