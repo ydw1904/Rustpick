@@ -555,6 +555,22 @@ fn shutdown(state: tauri::State<AppState>) {
     state.handle.send(Command::Exit);
 }
 
+/// Forget the saved Twitch login and relaunch, so a fresh device-code login starts.
+#[tauri::command]
+async fn logout(app: AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+    let ok = app
+        .dialog()
+        .message("Rustpick forgets your saved Twitch login (auth.json) and restarts to show a new login code.")
+        .title("Log out")
+        .buttons(MessageDialogButtons::OkCancelCustom("Log out".into(), "Cancel".into()))
+        .blocking_show();
+    if ok {
+        let _ = std::fs::remove_file(rustpick::settings::data_dir().join("auth.json"));
+        app.restart();
+    }
+}
+
 #[tauri::command]
 fn open_url(app: AppHandle, url: String) {
     use tauri_plugin_opener::OpenerExt;
@@ -663,7 +679,16 @@ fn main() {
         Settings::default()
     });
 
-    let lock = rustpick::lock::SingleInstance::acquire(&rustpick::settings::data_dir().join("lock.file"));
+    let lock_path = rustpick::settings::data_dir().join("lock.file");
+    let mut lock = rustpick::lock::SingleInstance::acquire(&lock_path);
+    // after a restart (Log out) the old process may still hold the lock for a moment
+    for _ in 0..20 {
+        if lock.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        lock = rustpick::lock::SingleInstance::acquire(&lock_path);
+    }
     if let Err(e) = lock {
         eprintln!("Another instance appears to be running or the lock file is unwritable ({e}). Exiting.");
         std::process::exit(3);
@@ -699,6 +724,7 @@ fn main() {
             set_paused,
             get_log,
             shutdown,
+            logout,
             open_url,
             copy_text,
             frontend_ready,

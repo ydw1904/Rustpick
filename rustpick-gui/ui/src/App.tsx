@@ -546,11 +546,14 @@ export default function App() {
             <Card size="sm">
               <CardHeader>
                 <CardTitle>Account</CardTitle>
-                <CardAction>
+                <CardAction className="flex items-center gap-2">
                   <Badge variant="outline" className={cn("gap-1.5", userId != null ? OK : login ? WARN : DIM)}>
                     <Dot />
                     {userId != null ? "Logged in" : login ? "Login required" : "Logged out"}
                   </Badge>
+                  <Button size="sm" variant="outline" onClick={() => invoke("logout")}>
+                    {userId != null ? "Log out" : "Log in again"}
+                  </Button>
                 </CardAction>
                 <CardDescription>
                   {userId != null ? <>User ID <span className="font-mono text-foreground select-text">{userId}</span></> : "Twitch device login"}
@@ -1185,7 +1188,7 @@ export default function App() {
               <li><b>Settings</b>: White list and Black list toggles, mining order, linked-accounts-only, and connection options. Most changes apply on the next reload.</li>
             </ul>
             <h4>Login</h4>
-            <p>Device-code only: open the shown link, enter the code on Twitch, and approve. No password is ever entered here.</p>
+            <p>Device-code only: open the shown link, enter the code on Twitch, and approve. No password is ever entered here. <b>Log out</b> on the Account card deletes auth.json and restarts with a new code.</p>
             <h4>Tray</h4>
             <p>With <i>Autostart in tray</i> enabled, Rustpick starts hidden and closing its window keeps it running. Normal launches keep the Dock icon and exit when closed.</p>
             <h4>Game lists</h4>
