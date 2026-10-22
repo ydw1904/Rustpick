@@ -432,7 +432,7 @@ struct Printer {
 
 impl Printer {
     fn line(&self, s: impl AsRef<str>) {
-        println!("{} {}", chrono::Local::now().format("%H:%M:%S"), s.as_ref());
+        println!("{} {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), s.as_ref());
     }
 
     fn print(&mut self, e: Event) {

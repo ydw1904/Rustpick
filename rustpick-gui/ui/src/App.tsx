@@ -380,7 +380,7 @@ export default function App() {
       case "Print":
         addLog({ ts: new Date().toISOString(), level: "INFO", msg: ev.data })
         setConsoleLines((l) => {
-          const next = [...l, `${new Date().toLocaleTimeString()} ${ev.data}`]
+          const next = [...l, `${new Date().toLocaleString()} ${ev.data}`]
           return next.length > 1000 ? next.slice(next.length - 1000) : next
         })
         break
@@ -496,7 +496,7 @@ export default function App() {
   // newest first, same as the Output pane
   const visibleLogs = logs.filter((l) => logRank(l.level) <= logRank(logView.level) && (!logQ || l.msg.toLowerCase().includes(logQ))).reverse()
   const consoleText = [...consoleLines].reverse().join("\n")
-  const logText = () => visibleLogs.map((l) => `${new Date(l.ts).toLocaleTimeString()} ${l.level.padEnd(5)} ${l.msg}`).join("\n")
+  const logText = () => visibleLogs.map((l) => `${new Date(l.ts).toLocaleString()} ${l.level.padEnd(5)} ${l.msg}`).join("\n")
 
   const statusCls = status.startsWith("Watching") ? OK : status === "Idle" || status === "Exited" ? DIM : WARN
   const wsSlots = Array.from({ length: WS_SLOTS }, (_, i) => i)
@@ -807,7 +807,7 @@ export default function App() {
                         d.is_claimed && "border-emerald-500/30 bg-emerald-500/5",
                       )}
                     >
-                      <div className="flex min-h-0 flex-1 gap-1.5">
+                      <div className="flex min-h-0 flex-1 justify-center gap-1.5">
                         {d.benefits.map((b) => (
                           <div key={b.id} className="flex w-24 flex-col items-center gap-1 text-center">
                             <div className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded bg-muted text-muted-foreground/50">
@@ -1160,7 +1160,7 @@ export default function App() {
         <pre className="min-h-0 flex-1 overflow-auto rounded-xl border bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere">
           {visibleLogs.length ? visibleLogs.map((l, i) => (
             <div key={i} className={l.level === "ERROR" ? BAD : l.level === "WARN" ? WARN : undefined}>
-              <span className="text-muted-foreground">{new Date(l.ts).toLocaleTimeString()} </span>
+              <span className="text-muted-foreground">{new Date(l.ts).toLocaleString()} </span>
               <span className="inline-block w-12">{l.level}</span>
               {l.msg}
             </div>

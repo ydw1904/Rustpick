@@ -376,7 +376,7 @@ fn push(pane: &mut VecDeque<Line<'static>>, line: Line<'static>) {
 }
 
 fn stamped(ts: DateTime<Local>, text: String, style: Style) -> Line<'static> {
-    Line::from(vec![ts.format("%H:%M:%S ").to_string().dark_gray(), Span::styled(text, style)])
+    Line::from(vec![ts.format("%Y-%m-%d %H:%M:%S ").to_string().dark_gray(), Span::styled(text, style)])
 }
 
 /// The newest lines that fit, `scroll` lines up from the bottom. Long lines are cut, not wrapped.
