@@ -11,6 +11,9 @@
 > [!IMPORTANT]
 > Rustpick is an early preview. Packaged downloads and Homebrew installs are planned, but are not available yet. Developers can build it from source today.
 
+> [!WARNING]
+> **Known issue: new sign-ins fail.** Since about 2026-09-21 Twitch rejects device-code login for the Android client ID that Rustpick and TwitchDropsMiner use (`invalid client`). Existing tokens keep working, so you can still mine by importing a TwitchDropsMiner session (`rustpick import`) or reusing an existing `auth.json`. This is a Twitch-side change, tracked upstream in [DevilXD/TwitchDropsMiner#1165](https://github.com/DevilXD/TwitchDropsMiner/issues/1165).
+
 ## What is Rustpick?
 
 Rustpick keeps track of your eligible Twitch Drops campaigns, watches matching channels in the background, and claims rewards when they are ready. It does not play or download the video stream.
@@ -33,31 +36,41 @@ Rustpick can switch channels when a stream goes offline or a higher-priority gam
 
 ## See it in action
 
-The desktop app includes **Main**, **Inventory**, **Settings**, and **Help** views, plus a tray mode.
+The desktop app has **Main**, **Inventory**, **Settings**, **Log**, and **Help** tabs, plus a tray mode. Main shows the current drop's progress, the channel being watched and live output. Inventory lists every campaign and its rewards. Log has a level filter, search and copy. **Log out** on the Account card deletes the saved token and starts a fresh sign-in.
 
-> Screenshots are coming as the early desktop interface stabilizes.
-
-<!-- Add the first desktop screenshot here when ready:
+<!-- Screenshots: save them to docs/screenshots/ and uncomment.
 <p align="center">
-  <img src="docs/screenshots/main.png" alt="Rustpick desktop app showing campaign progress" width="900">
+  <img src="docs/screenshots/main.png" alt="Rustpick desktop app, Main tab, showing drop progress and the watched channel" width="900">
+</p>
+<p align="center">
+  <img src="docs/screenshots/inventory.png" alt="Rustpick desktop app, Inventory tab, showing campaigns and rewards" width="900">
+</p>
+<p align="center">
+  <img src="docs/screenshots/tui.png" alt="Rustpick terminal UI showing progress, channels and output" width="900">
 </p>
 -->
 
+## How it works
+
+1. **Discover.** Rustpick loads your drop campaigns and inventory over Twitch's GraphQL API and decides which drops can still be earned (time window, linked game account, White list and Black list, already claimed).
+2. **Pick a channel.** It finds live channels for the eligible games, ranks them by your White list or chosen order, and watches the best one.
+3. **Watch without video.** Every 20 seconds it gets a playback token, fetches the stream's live segment list and sends a `HEAD` request for each segment, like a player would. Twitch counts that as watching, but no video is downloaded.
+4. **Listen.** A pool of PubSub WebSockets (up to 8 sockets with 50 topics each) streams drop progress, claim availability, and channels going live or offline, so Rustpick reacts in seconds instead of polling.
+5. **Claim and move on.** When a drop is ready it is claimed, logged to `claims.jsonl` and optionally announced through a webhook, and Rustpick switches to the next drop or channel.
+
+The mining engine is one state machine on a single tokio task. WebSockets, timers and frontends talk to it only through messages, and it publishes events on a broadcast channel. The desktop app, the terminal UI and the plain-log mode are thin frontends over the same library.
+
+## Tech stack
+
+- **Core:** Rust 2024 edition, tokio, reqwest with rustls, tokio-tungstenite, serde, tracing
+- **Desktop:** Tauri 2 (tray, notifications, native macOS vibrancy) with React 19, TypeScript, Vite, Tailwind CSS 4 and Base UI
+- **Terminal UI:** ratatui and crossterm
+- **Ops:** Docker image with a health check, Prometheus metrics endpoint, `status.json` snapshot, webhooks that work with Discord, Slack and Gotify
+- **Interop:** a small Python pickle reader that imports TwitchDropsMiner's `cookies.jar` without running Python
+
 ## Installation
 
-### Planned downloads
-
-GitHub Releases will be the main source for ready-to-run CLI binaries and desktop packages. The initial targets are macOS on Apple Silicon and Intel, Windows on x86-64, and Linux on x86-64. A Homebrew formula for the CLI and a Homebrew cask for the macOS app are also planned.
-
-The intended Homebrew experience is:
-
-```sh
-# Planned, not available yet
-brew install rustpick
-brew install --cask rustpick
-```
-
-The formula will install the CLI. The cask will install the macOS desktop app.
+Prebuilt binaries on GitHub Releases (macOS, Windows, Linux) and Homebrew installs are planned. For now, build from source.
 
 ### Build from source
 
@@ -84,7 +97,7 @@ npm run tauri build
 ### Desktop
 
 1. Open Rustpick.
-2. Follow the sign-in prompt and enter the shown code at `twitch.tv/activate`.
+2. Follow the sign-in prompt and enter the shown code at `twitch.tv/activate` (currently blocked by Twitch for new sign-ins, see the known issue above).
 3. Review your campaigns and turn on the White list, the Black list, or neither to mine everything.
 4. Leave Rustpick running while it works. It can stay in the system tray.
 
@@ -164,16 +177,17 @@ Any of `RUSTPICK_PROXY`, `RUSTPICK_NOTIFY_URL`, `RUSTPICK_LANGUAGE`, `RUSTPICK_W
 
 ## Current status
 
-Rustpick is an early port. The following pieces are implemented:
+Rustpick runs unattended on a live Twitch account and earns and claims drops end to end. Implemented:
 
-- Device-code login, inventory and campaign loading, eligibility checks, and claiming
+- Device-code login, TwitchDropsMiner import, inventory and campaign loading, eligibility checks, and claiming
 - Channel discovery and automatic switching when streams change
-- Drop progress tracking with fallback checks
+- Drop progress tracking with fallback checks, using the playlist method TwitchDropsMiner adopted after Twitch stopped crediting the old minute-watched events in October 2026
 - Independent White list and Black list toggles, a linked-accounts-only switch, and two mining orders
-- Desktop, tray, autostart, notifications, and a headless CLI
+- Desktop app, tray, autostart, notifications, a terminal UI and a plain-log headless mode
+- Multiple profiles, Docker, Prometheus metrics and webhooks
 - Translated core messages using TwitchDropsMiner language files
 
-The post-login flow has automated tests and compiles, but has not yet been fully tested with a live Twitch account. Expect rough edges until the first public release.
+Still open: new sign-ins (see the known issue above) and packaged releases.
 
 ## Data and security
 
