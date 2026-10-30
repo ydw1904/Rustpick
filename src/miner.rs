@@ -1182,7 +1182,9 @@ impl Miner {
         } else if let Some(w) = self.watching_channel()
             && self.can_watch(w)
         {
-            self.status(t!["status", "watching"; "channel" => w.name()]);
+            if !self.paused {
+                self.status(t!["status", "watching"; "channel" => w.name()]);
+            }
         } else {
             self.print(t!["status", "no_channel"]);
             self.change_state(State::Idle);
